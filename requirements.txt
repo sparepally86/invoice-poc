@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pydantic
+sentence-transformers
+annoy
+easyocr
+python-multipart
+pymongo
+pytest
