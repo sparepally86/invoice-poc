@@ -2,7 +2,7 @@ fastapi
 uvicorn[standard]
 pydantic
 sentence-transformers
-faiss-cpu
+annoy
 easyocr
 python-multipart
 pymongo
