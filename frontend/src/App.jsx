@@ -33,7 +33,7 @@ export default function App() {
 
     setLoading(true);
     try {
-      const url = `${BACKEND_URL.replace(/\\/$/, "")}/api/v1/incoming`;
+      const url = `${BACKEND_URL.replace(/\/$/, "")}/api/v1/incoming`;
       const r = await axios.post(url, json, { timeout: 15000 });
       setResp(r.data);
     } catch (e) {
