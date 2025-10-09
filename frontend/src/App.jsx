@@ -1,90 +1,130 @@
-import React, { useState } from "react";
+// frontend/src/App.jsx
+import { useState } from "react";
 import axios from "axios";
 
-const BACKEND_URL =
-  import.meta.env.VITE_BACKEND_URL || "https://your-render-backend-url.onrender.com";
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || "").replace(/\/$/, "") || "https://invoice-poc-1gpt.onrender.com";
 
 export default function App() {
-  const [payload, setPayload] = useState(`{
-  "source": {"capture_system":"CapturePOC", "capture_id":"cap-1001"},
-  "buyer": {"buyer_id":"B001","name":"Example Buyer"},
-  "vendor": {"vendor_id":"V0002","name_raw":"Indigo"},
+  const [poNumber, setPoNumber] = useState("PO-1001");
+  const [splitFirstLine, setSplitFirstLine] = useState(true);
+  const [jsonText, setJsonText] = useState(`{
   "header": {
-    "invoice_number":{"value":"INV-2025-1001"},
-    "invoice_date":{"value":"2025-10-01"},
-    "grand_total":{"value":8500.00}
+    "erpsystem": "ecc",
+    "source": "capture",
+    "buyer_companycode": "1000",
+    "invoice_ref": "TEST23127",
+    "invoice_date": "2025-09-11",
+    "vendor_number": "1000",
+    "vendor_name": "C.E.B. NEW YORK",
+    "currency": "USD",
+    "amount": 1000,
+    "status": 2
   },
-  "lines":[]
+  "items": []
 }`);
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [resp, setResp] = useState(null);
+  const [statusMsg, setStatusMsg] = useState(null);
+  const [loadingGen, setLoadingGen] = useState(false);
+  const [loadingSubmit, setLoadingSubmit] = useState(false);
+  const [backendUrlShown] = useState(BACKEND_URL);
 
-  const submit = async () => {
-    setError(null);
-    setResp(null);
-    let json;
+  async function handleGenerate() {
+    setStatusMsg(null);
+    setLoadingGen(true);
     try {
-      json = JSON.parse(payload);
-    } catch (e) {
-      setError("Invalid JSON: " + e.message);
-      return;
-    }
+      // call dev generator
+      const params = new URLSearchParams();
+      params.append("po_number", poNumber);
+      if (splitFirstLine) params.append("split_first_line", "true");
 
-    setLoading(true);
-    try {
-      const url = `${BACKEND_URL.replace(/\/$/, "")}/api/v1/incoming`;
-      const r = await axios.post(url, json, { timeout: 15000 });
-      setResp(r.data);
-    } catch (e) {
-      if (e.response)
-        setError(
-          `Server error: ${e.response.status} ${JSON.stringify(e.response.data)}`
-        );
-      else setError("Network / CORS error: " + e.message);
+      const url = `${BACKEND_URL}/api/v1/dev/generate-invoice?${params.toString()}`;
+      const resp = await axios.post(url, null, { timeout: 15000 });
+      const generated = resp.data?.generated_invoice;
+      if (!generated) {
+        setStatusMsg("No invoice returned from generator.");
+      } else {
+        // Pretty print and set into textarea for editing
+        setJsonText(JSON.stringify(generated, null, 2));
+        setStatusMsg(`Generated invoice for ${poNumber}`);
+      }
+    } catch (err) {
+      console.error(err);
+      const msg = err?.response?.data?.detail || err.message || "Generation failed";
+      setStatusMsg(`Error: ${msg}`);
     } finally {
-      setLoading(false);
+      setLoadingGen(false);
     }
-  };
+  }
+
+  async function handleSubmitInvoice() {
+    setStatusMsg(null);
+    setLoadingSubmit(true);
+    try {
+      // parse JSON and submit to incoming endpoint
+      const json = JSON.parse(jsonText);
+      const url = `${BACKEND_URL}/api/v1/incoming`;
+      const r = await axios.post(url, json, { timeout: 15000 });
+      setStatusMsg(`Submitted — invoice_id: ${r.data?.invoice_id || JSON.stringify(r.data)}`);
+    } catch (err) {
+      console.error(err);
+      if (err instanceof SyntaxError) {
+        setStatusMsg("Invalid JSON in textarea. Fix it and try again.");
+      } else {
+        const msg = err?.response?.data || err.message;
+        setStatusMsg(`Submit error: ${JSON.stringify(msg)}`);
+      }
+    } finally {
+      setLoadingSubmit(false);
+    }
+  }
 
   return (
-    <div className="container">
-      <h1>Invoice POC — Paste Canonical JSON</h1>
-      <p className="hint">
-        Paste canonical invoice JSON and click Submit. Backend must expose{" "}
-        <code>/api/v1/incoming</code>.
-      </p>
+    <div style={{ maxWidth: 900, margin: "28px auto", fontFamily: "Inter, system-ui, sans-serif" }}>
+      <h1>Invoice POC — Paste or Generate Invoice JSON</h1>
 
-      <textarea
-        value={payload}
-        onChange={(e) => setPayload(e.target.value)}
-      ></textarea>
+      <div style={{ display: "flex", gap: 12, marginBottom: 12, alignItems: "center" }}>
+        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          PO Number:
+          <input value={poNumber} onChange={(e) => setPoNumber(e.target.value)} style={{ padding: "6px 10px" }} />
+        </label>
 
-      <div className="controls">
-        <button onClick={submit} disabled={loading}>
-          {loading ? "Submitting..." : "Submit Invoice"}
+        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input type="checkbox" checked={splitFirstLine} onChange={(e) => setSplitFirstLine(e.target.checked)} />
+          Split first line (1000/2000)
+        </label>
+
+        <button onClick={handleGenerate} disabled={loadingGen} style={{ padding: "8px 12px", background: "#10b981", color: "white", border: "none", borderRadius: 6 }}>
+          {loadingGen ? "Generating..." : "Generate Invoice"}
         </button>
+
+        <div style={{ marginLeft: "auto", fontSize: 12, color: "#666" }}>
+          Backend URL: <span style={{ background: "#f3f4f6", padding: "4px 8px", borderRadius: 6 }}>{backendUrlShown}</span>
+        </div>
       </div>
 
-      {error && <div className="error">Error: {error}</div>}
+      <textarea
+        rows={18}
+        value={jsonText}
+        onChange={(e) => setJsonText(e.target.value)}
+        style={{ width: "100%", padding: 14, borderRadius: 8, border: "1px solid #e5e7eb", fontFamily: "monospace", fontSize: 13 }}
+      />
 
-      {resp && (
-        <div className="success">
-          <h3>Response</h3>
-          <pre>{JSON.stringify(resp, null, 2)}</pre>
-          {resp.invoice_id && (
-            <p>
-              Invoice ID: <strong>{resp.invoice_id}</strong>
-            </p>
-          )}
+      <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+        <button onClick={handleSubmitInvoice} disabled={loadingSubmit} style={{ padding: "10px 14px", background: "#047857", color: "white", border: "none", borderRadius: 6 }}>
+          {loadingSubmit ? "Submitting..." : "Submit Invoice"}
+        </button>
+
+        <button onClick={() => { setJsonText("{}"); setStatusMsg("Cleared textarea"); }} style={{ padding: "10px 14px" }}>
+          Clear
+        </button>
+
+        <div style={{ marginLeft: "auto", color: statusMsg && statusMsg.startsWith("Error") ? "#b91c1c" : "#065f46" }}>
+          {statusMsg}
         </div>
-      )}
+      </div>
 
-      <footer>
-        <small>
-          Backend URL: <code>{BACKEND_URL}</code>
-        </small>
-      </footer>
+      <p style={{ marginTop: 18, color: "#6b7280", fontSize: 13 }}>
+        Tip: edit the generated JSON before Submit to test validation / exceptions.
+      </p>
     </div>
   );
 }
