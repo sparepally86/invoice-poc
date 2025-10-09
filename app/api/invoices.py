@@ -83,9 +83,42 @@ async def incoming_invoice(payload: dict = Body(...)):
 
     return {"invoice_id": invoice_id, "status": "queued"}
 
+# app/api/tasks.py  (or wherever your /invoices/{invoice_id} route is)
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
+from app.storage.mongo_client import get_db
+
+router = APIRouter()
+
 @router.get("/invoices/{invoice_id}", response_class=JSONResponse)
 async def get_invoice(invoice_id: str):
-    rec = INVOICE_STORE.get(invoice_id)
-    if not rec:
-        raise HTTPException(status_code=404, detail="invoice not found")
-    return rec
+    """
+    Robust invoice fetch:
+     1) try _id
+     2) fallback to header.invoice_ref
+     3) fallback to header.invoice_number.value (common Captures)
+    Returns full invoice doc (including _workflow.steps).
+    """
+    db = get_db()
+
+    # 1) try by _id
+    rec = db.invoices.find_one({"_id": invoice_id})
+    if rec:
+        # ensure _id is serializable
+        rec["_id"] = str(rec.get("_id"))
+        return JSONResponse(rec)
+
+    # 2) fallback: header.invoice_ref
+    rec = db.invoices.find_one({"header.invoice_ref": invoice_id})
+    if rec:
+        rec["_id"] = str(rec.get("_id"))
+        return JSONResponse(rec)
+
+    # 3) fallback: header.invoice_number.value (some capture outputs use nested value)
+    rec = db.invoices.find_one({"header.invoice_number.value": invoice_id})
+    if rec:
+        rec["_id"] = str(rec.get("_id"))
+        return JSONResponse(rec)
+
+    # not found
+    raise HTTPException(status_code=404, detail=f"invoice not found for id/ref: {invoice_id}")
