@@ -47,7 +47,7 @@ def ensure_minimal_structure(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     return payload
 
-@router.post("/incoming")
+@router.post("/incoming", response_class=JSONResponse)
 async def incoming_invoice(payload: dict = Body(...)):
     """
     Accept canonical invoice JSON, store it, and enqueue a processing task.
