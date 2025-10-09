@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Import your router module (ensure this path matches your repo)
-from app.api import invoices, masterdata, dev
+from app.api import invoices, masterdata, dev, tasks
 
 app = FastAPI(title="Invoice POC Agentic")
 
@@ -23,6 +23,8 @@ app.add_middleware(
 app.include_router(invoices.router, prefix="/api/v1")
 app.include_router(masterdata.router, prefix="/api/v1")
 app.include_router(dev.router, prefix="/api/v1")
+app.include_router(tasks.router, prefix="/api/v1")
+
 
 # add to app/main.py near the bottom, after router includes
 @app.on_event("startup")
