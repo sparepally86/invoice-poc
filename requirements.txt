@@ -7,3 +7,4 @@ easyocr
 python-multipart
 pymongo
 pytest
+dnspython
