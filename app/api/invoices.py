@@ -4,9 +4,10 @@ from fastapi.responses import JSONResponse
 from app.storage.mongo_client import get_db
 from typing import Dict, Any
 import uuid
-import datetime
+from datetime import datetime
 
 router = APIRouter()
+
 
 def ensure_minimal_structure(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -52,7 +53,7 @@ def ensure_minimal_structure(payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload["lines"], list):
             payload["lines"] = []
     else:
-        # normalize to 'items' if provided
+        # normalize to 'lines' if 'items' provided
         items = payload.get("items")
         if isinstance(items, list):
             payload["lines"] = items
@@ -63,6 +64,7 @@ def ensure_minimal_structure(payload: Dict[str, Any]) -> Dict[str, Any]:
     payload.setdefault("ml_metadata", {})
 
     return payload
+
 
 @router.post("/incoming", response_class=JSONResponse)
 async def incoming_invoice(payload: dict = Body(...)):
@@ -90,7 +92,7 @@ async def incoming_invoice(payload: dict = Body(...)):
 
     invoice_id = invoice_ref
 
-    now = datetime.datetime.datetime.utcnow().isoformat() + "Z" if hasattr(datetime, "datetime") else datetime.datetime.utcnow().isoformat() + "Z"
+    now = datetime.utcnow().isoformat() + "Z"
 
     invoice_doc = {
         **payload,
