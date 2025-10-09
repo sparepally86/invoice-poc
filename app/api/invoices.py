@@ -1,47 +1,64 @@
 # app/api/invoices.py
-from fastapi import APIRouter, Body, HTTPException
-from app.storage.mongo_client import get_db
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
+from app.storage.mongo_client import get_db
 from typing import Dict, Any
 import uuid
 import datetime
 
 router = APIRouter()
 
-# In-memory store for POC
-INVOICE_STORE: Dict[str, Dict[str, Any]] = {}
-
 def ensure_minimal_structure(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     Ensure the payload has a minimal set of fields so the stored record
-    is consistent. We intentionally do NOT enforce full Pydantic validation
-    here so the frontend/Capture can post partial canonical JSON during POC.
+    is consistent. This keeps POC ingestion tolerant.
     """
-    payload = dict(payload)  # shallow copy to avoid mutating caller
+    payload = dict(payload)  # shallow copy
 
-    # header
-    header = payload.get("header", {})
+    # header normalization (support multiple shapes)
+    header = payload.get("header") or {}
     if not isinstance(header, dict):
         header = {}
-    header.setdefault("invoice_number", {"value": header.get("invoice_number", {}).get("value") if isinstance(header.get("invoice_number"), dict) else None, "confidence": 0.0})
-    header.setdefault("invoice_date", {"value": header.get("invoice_date", {}).get("value") if isinstance(header.get("invoice_date"), dict) else None, "confidence": 0.0})
-    header.setdefault("grand_total", {"value": header.get("grand_total", {}).get("value") if isinstance(header.get("grand_total"), dict) else 0.0, "confidence": 0.0})
+
+    # invoice_ref can be present as header.invoice_ref (string) or header.invoice_number dict
+    inv_ref = header.get("invoice_ref") or None
+    inv_number = header.get("invoice_number")
+    if isinstance(inv_number, dict):
+        inv_number_val = inv_number.get("value")
+    else:
+        inv_number_val = inv_number
+
+    header.setdefault("invoice_ref", inv_ref or inv_number_val)
+    # keep nested shapes for legacy capture shape
+    if not isinstance(header.get("invoice_number"), dict):
+        header.setdefault("invoice_number", {"value": header.get("invoice_ref"), "confidence": 0.0})
+    if not isinstance(header.get("invoice_date"), dict):
+        header.setdefault("invoice_date", {"value": header.get("invoice_date") if header.get("invoice_date") else None, "confidence": 0.0})
+    if not isinstance(header.get("grand_total"), dict):
+        header.setdefault("grand_total", {"value": header.get("grand_total") or header.get("amount") or 0.0, "confidence": 0.0})
+
     payload["header"] = header
 
     # vendor
-    vendor = payload.get("vendor", {})
+    vendor = payload.get("vendor") or {}
     if not isinstance(vendor, dict):
-        vendor = {"name_raw": None}
-    vendor.setdefault("vendor_id", vendor.get("vendor_id"))
-    vendor.setdefault("name_raw", vendor.get("name_raw"))
+        vendor = {}
+    vendor.setdefault("vendor_id", vendor.get("vendor_id") or vendor.get("_id"))
+    vendor.setdefault("name_raw", vendor.get("name_raw") or vendor.get("name"))
     payload["vendor"] = vendor
 
-    # lines
-    lines = payload.get("lines")
-    if not isinstance(lines, list):
-        payload["lines"] = []
+    # lines/items support both 'lines' and 'items'
+    if "lines" in payload:
+        if not isinstance(payload["lines"], list):
+            payload["lines"] = []
+    else:
+        # normalize to 'items' if provided
+        items = payload.get("items")
+        if isinstance(items, list):
+            payload["lines"] = items
+        else:
+            payload.setdefault("lines", [])
 
-    # validation and ml_metadata placeholders
     payload.setdefault("validation", {})
     payload.setdefault("ml_metadata", {})
 
@@ -50,14 +67,31 @@ def ensure_minimal_structure(payload: Dict[str, Any]) -> Dict[str, Any]:
 @router.post("/incoming", response_class=JSONResponse)
 async def incoming_invoice(payload: dict = Body(...)):
     """
-    Accept canonical invoice JSON, store it, and enqueue a processing task.
+    Accept canonical invoice JSON, store it in invoices collection (with deterministic _id),
+    and enqueue a processing task in tasks collection.
     """
     db = get_db()
-    header = payload.get("header", {})
-    invoice_ref = header.get("invoice_ref") or header.get("invoice_number") or f"INV-{uuid.uuid4().hex[:8]}"
+
+    # Normalize payload minimally and pick invoice id
+    payload = ensure_minimal_structure(payload)
+    header = payload.get("header", {}) or {}
+
+    # Pick invoice_ref: header.invoice_ref (str) or header.invoice_number.value
+    invoice_ref = header.get("invoice_ref")
+    if not invoice_ref:
+        inv_num = header.get("invoice_number")
+        if isinstance(inv_num, dict):
+            invoice_ref = inv_num.get("value")
+        else:
+            invoice_ref = inv_num
+
+    if not invoice_ref:
+        invoice_ref = f"INV-{uuid.uuid4().hex[:8]}"
+
     invoice_id = invoice_ref
 
-    now = datetime.datetime.utcnow().isoformat() + "Z"
+    now = datetime.datetime.datetime.utcnow().isoformat() + "Z" if hasattr(datetime, "datetime") else datetime.datetime.utcnow().isoformat() + "Z"
+
     invoice_doc = {
         **payload,
         "_id": invoice_id,
@@ -66,37 +100,35 @@ async def incoming_invoice(payload: dict = Body(...)):
         "created_at": now
     }
 
-    # store invoice
+    # store invoice (upsert to be idempotent in POC)
     try:
-        db.invoices.insert_one(invoice_doc)
+        db.invoices.replace_one({"_id": invoice_id}, invoice_doc, upsert=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to store invoice: {e}")
 
-    # create a processing task
+    # enqueue processing task
     task_doc = {
         "type": "process_invoice",
         "invoice_id": invoice_id,
         "status": "queued",
         "created_at": now
     }
-    db.tasks.insert_one(task_doc)
+    try:
+        db.tasks.insert_one(task_doc)
+    except Exception as e:
+        # invoice stored but task creation failed
+        return JSONResponse({"invoice_id": invoice_id, "status": "stored_task_failed", "error": str(e)}, status_code=500)
 
-    return {"invoice_id": invoice_id, "status": "queued"}
+    return JSONResponse({"invoice_id": invoice_id, "status": "queued"})
 
-# app/api/tasks.py  (or wherever your /invoices/{invoice_id} route is)
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
-from app.storage.mongo_client import get_db
-
-router = APIRouter()
 
 @router.get("/invoices/{invoice_id}", response_class=JSONResponse)
 async def get_invoice(invoice_id: str):
     """
     Robust invoice fetch:
-     1) try _id
-     2) fallback to header.invoice_ref
-     3) fallback to header.invoice_number.value (common Captures)
+    1) try _id
+    2) fallback to header.invoice_ref
+    3) fallback to header.invoice_number.value (common Capture shape)
     Returns full invoice doc (including _workflow.steps).
     """
     db = get_db()
@@ -104,7 +136,6 @@ async def get_invoice(invoice_id: str):
     # 1) try by _id
     rec = db.invoices.find_one({"_id": invoice_id})
     if rec:
-        # ensure _id is serializable
         rec["_id"] = str(rec.get("_id"))
         return JSONResponse(rec)
 
@@ -114,11 +145,10 @@ async def get_invoice(invoice_id: str):
         rec["_id"] = str(rec.get("_id"))
         return JSONResponse(rec)
 
-    # 3) fallback: header.invoice_number.value (some capture outputs use nested value)
+    # 3) fallback: header.invoice_number.value
     rec = db.invoices.find_one({"header.invoice_number.value": invoice_id})
     if rec:
         rec["_id"] = str(rec.get("_id"))
         return JSONResponse(rec)
 
-    # not found
     raise HTTPException(status_code=404, detail=f"invoice not found for id/ref: {invoice_id}")
