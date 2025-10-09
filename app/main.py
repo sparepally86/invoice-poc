@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Import your router module (ensure this path matches your repo)
-from app.api import invoices, masterdata
+from app.api import invoices, masterdata, dev
 
 app = FastAPI(title="Invoice POC Agentic")
 
@@ -22,6 +22,7 @@ app.add_middleware(
 # Register routers AFTER CORS middleware
 app.include_router(invoices.router, prefix="/api/v1")
 app.include_router(masterdata.router, prefix="/api/v1")
+app.include_router(dev.router, prefix="/api/v1")
 
 @app.get("/health")
 async def health():
