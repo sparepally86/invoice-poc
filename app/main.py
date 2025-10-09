@@ -24,6 +24,16 @@ app.include_router(invoices.router, prefix="/api/v1")
 app.include_router(masterdata.router, prefix="/api/v1")
 app.include_router(dev.router, prefix="/api/v1")
 
+# add to app/main.py near the bottom, after router includes
+@app.on_event("startup")
+async def _start_orchestrator():
+    # start the background orchestrator worker
+    try:
+        from app.orchestrator import start_worker
+        start_worker(app)
+    except Exception as e:
+        print("Failed to start orchestrator:", e)
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}

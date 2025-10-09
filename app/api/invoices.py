@@ -1,5 +1,6 @@
 # app/api/invoices.py
 from fastapi import APIRouter, Body, HTTPException
+from app.storage.mongo_client import get_db
 from fastapi.responses import JSONResponse
 from typing import Dict, Any
 import uuid
@@ -46,32 +47,41 @@ def ensure_minimal_structure(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     return payload
 
-@router.post("/incoming", response_class=JSONResponse)
-async def incoming(payload: Dict[str, Any] = Body(...)):
+@router.post("/incoming")
+async def incoming_invoice(payload: dict = Body(...)):
     """
-    Accept any JSON representing the canonical invoice (flexible), ensure minimal structure,
-    store in-memory, and return a simple receipt indicating agentic processing is pending.
+    Accept canonical invoice JSON, store it, and enqueue a processing task.
     """
-    if not isinstance(payload, dict):
-        return JSONResponse({"error":"expected a JSON object"}, status_code=400)
+    db = get_db()
+    header = payload.get("header", {})
+    invoice_ref = header.get("invoice_ref") or header.get("invoice_number") or f"INV-{uuid.uuid4().hex[:8]}"
+    invoice_id = invoice_ref
 
-    # Ensure minimal structure and defaults
-    record = ensure_minimal_structure(payload)
-
-    # Generate an invoice id and add metadata
-    invoice_id = "inv-" + uuid.uuid4().hex[:12]
-    record_meta = {
-        "invoice_id": invoice_id,
-        "status_code": 1,
-        "message": "received - queued for agentic automation",
-        "received_at": datetime.datetime.utcnow().isoformat() + "Z"
+    now = datetime.datetime.utcnow().isoformat() + "Z"
+    invoice_doc = {
+        **payload,
+        "_id": invoice_id,
+        "status": "RECEIVED",
+        "_workflow": {"steps": []},
+        "created_at": now
     }
-    record["_meta"] = record_meta
 
-    # Store the record
-    INVOICE_STORE[invoice_id] = record
+    # store invoice
+    try:
+        db.invoices.insert_one(invoice_doc)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to store invoice: {e}")
 
-    return JSONResponse({"invoice_id": invoice_id, "status_code": 1, "message": "received - queued for agentic automation"})
+    # create a processing task
+    task_doc = {
+        "type": "process_invoice",
+        "invoice_id": invoice_id,
+        "status": "queued",
+        "created_at": now
+    }
+    db.tasks.insert_one(task_doc)
+
+    return {"invoice_id": invoice_id, "status": "queued"}
 
 @router.get("/invoices/{invoice_id}", response_class=JSONResponse)
 async def get_invoice(invoice_id: str):
