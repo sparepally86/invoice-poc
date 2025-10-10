@@ -1,10 +1,11 @@
 # app/api/invoices.py
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Request, Query
 from fastapi.responses import JSONResponse
 from app.storage.mongo_client import get_db
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 import uuid
 from datetime import datetime
+from bson import ObjectId
 
 router = APIRouter()
 
@@ -154,3 +155,48 @@ async def get_invoice(invoice_id: str):
         return JSONResponse(rec)
 
     raise HTTPException(status_code=404, detail=f"invoice not found for id/ref: {invoice_id}")
+
+@router.get("/invoices", response_class=JSONResponse)
+async def list_invoices(limit: int = Query(50, ge=1, le=1000), q: Optional[str] = Query(None)):
+    """
+    Simple list endpoint for invoices.
+    - ?limit=50  (max 1000)
+    - ?q=TERM    (matches _id, header.invoice_ref, header.po_number, header.po)
+    Returns: { "items": [ {..invoice..}, ... ] }
+    """
+    db = get_db()
+    # build filter
+    flt = {}
+    if q:
+        # basic exact or header matches
+        flt = {
+            "$or": [
+                {"_id": q},
+                {"header.invoice_ref": q},
+                {"header.po_number": q},
+                {"header.po": q},
+            ]
+        }
+
+    try:
+        # find and sort newest first
+        cursor = db.invoices.find(flt).sort("created_at", -1).limit(int(limit))
+        docs = []
+        for d in cursor:
+            # Convert ObjectId to string if present
+            if isinstance(d.get("_id"), ObjectId):
+                d["_id"] = str(d["_id"])
+            # sanitize other non-serializable fields if needed (datetimes usually are iso strings already)
+            # Keep only lightweight view to speed up UI
+            item = {
+                "_id": d.get("_id"),
+                "header": d.get("header", {}),
+                "status": d.get("status"),
+                "_workflow": {"steps": d.get("_workflow", {}).get("steps", [])[-3:]},  # keep last 3 steps
+                "created_at": d.get("created_at"),
+                "updated_at": d.get("updated_at"),
+            }
+            docs.append(item)
+        return JSONResponse({"items": docs})
+    except Exception as e:
+        return JSONResponse({"error": "list_failed", "detail": str(e)}, status_code=500)
