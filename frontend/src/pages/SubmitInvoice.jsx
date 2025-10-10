@@ -1,11 +1,13 @@
-// src/pages/SubmitInvoice.jsx
+// frontend/src/pages/SubmitInvoice.jsx
 import React, { useState } from "react";
-import api from "../lib/api"; // if you have it; fallback to fetch inside
+
 const BACKEND = (import.meta.env.VITE_BACKEND_URL || "").replace(/\/$/, "") || "https://invoice-poc-1gpt.onrender.com";
 
 export default function SubmitInvoice() {
+  // mode: "po" or "nonpo"
+  const [mode, setMode] = useState("po");
   const [poNumber, setPoNumber] = useState("PO-1001");
-  const [splitFirstLine, setSplitFirstLine] = useState(true);
+  const [splitLineItem, setSplitLineItem] = useState(true);
   const [jsonText, setJsonText] = useState(`{
   "header": {
     "invoice_ref": "TEST-1",
@@ -21,7 +23,7 @@ export default function SubmitInvoice() {
   const [loadingGen, setLoadingGen] = useState(false);
   const [loadingSubmit, setLoadingSubmit] = useState(false);
 
-  // checkboxes
+  // mutation checkboxes
   const [missMandatory, setMissMandatory] = useState(false);
   const [badVendor, setBadVendor] = useState(false);
   const [badPO, setBadPO] = useState(false);
@@ -30,25 +32,23 @@ export default function SubmitInvoice() {
     setStatusMsg(null);
     setLoadingGen(true);
     try {
-      // call dev generator
+      // Build generator endpoint. Only pass po_number when PO-based mode selected
       const params = new URLSearchParams();
-      params.append("po_number", poNumber);
-      if (splitFirstLine) params.append("split_first_line", "true");
+      if (mode === "po" && poNumber) params.append("po_number", poNumber);
+      if (splitLineItem) params.append("split_first_line", "true");
 
       const url = `${BACKEND}/api/v1/dev/generate-invoice?${params.toString()}`;
       const resp = await fetch(url, { method: "POST" });
       const data = await resp.json();
-      const generated = data?.generated_invoice || data;
+      const generated = data?.generated_invoice || data || {};
 
-      // mutate based on checkboxes
-      const mutated = JSON.parse(JSON.stringify(generated)); // deep clone
+      // deep clone to mutate safely
+      const mutated = JSON.parse(JSON.stringify(generated));
 
       // a) remove mandatory field when requested
       if (missMandatory) {
-        // drop invoice_ref if present
         if (mutated.header) {
           delete mutated.header.invoice_ref;
-          // if there is invoice_number object, delete its value
           if (mutated.header.invoice_number && typeof mutated.header.invoice_number === "object") {
             delete mutated.header.invoice_number.value;
           }
@@ -60,7 +60,6 @@ export default function SubmitInvoice() {
         if (!mutated.header) mutated.header = {};
         mutated.header.vendor_number = "BAD-VENDOR-9999";
         mutated.header.vendor_name = "NonExistent Vendor";
-        // also clear vendor section if present
         if (mutated.vendor) {
           mutated.vendor.vendor_id = "BAD-VENDOR-9999";
           mutated.vendor.name_raw = "NonExistent Vendor";
@@ -71,15 +70,13 @@ export default function SubmitInvoice() {
       if (badPO) {
         if (!mutated.header) mutated.header = {};
         mutated.header.po_number = "PO-BAD-000";
-        // optionally change item amounts to mismatch PO totals
         if (mutated.items && mutated.items.length > 0) {
-          // bump the first line amount slightly
           mutated.items[0].amount = (mutated.items[0].amount || 0) + 123.45;
         }
       }
 
       setJsonText(JSON.stringify(mutated, null, 2));
-      setStatusMsg(`Generated invoice for ${poNumber} (mutated)`);
+      setStatusMsg(`Generated invoice (${mode === "po" ? `PO ${poNumber}` : "Non-PO"})`);
     } catch (err) {
       console.error(err);
       setStatusMsg(`Error generating invoice: ${err?.message || JSON.stringify(err)}`);
@@ -92,7 +89,6 @@ export default function SubmitInvoice() {
     setStatusMsg(null);
     setLoadingSubmit(true);
     try {
-      // parse JSON and submit to incoming endpoint
       const json = JSON.parse(jsonText);
       const url = `${BACKEND}/api/v1/incoming`;
       const r = await fetch(url, {
@@ -115,24 +111,38 @@ export default function SubmitInvoice() {
   }
 
   return (
-    <div>
+    <div style={{ maxWidth: 1000 }}>
       <h1>Submit Invoice (Capture simulation)</h1>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
-        <label>
-          PO Number: <input value={poNumber} onChange={(e) => setPoNumber(e.target.value)} style={{ marginLeft: 8 }} />
+      <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 12 }}>
+        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input type="radio" name="mode" value="po" checked={mode === "po"} onChange={() => setMode("po")} />
+          PO-based
+        </label>
+        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input type="radio" name="mode" value="nonpo" checked={mode === "nonpo"} onChange={() => setMode("nonpo")} />
+          Non-PO based
         </label>
 
-        <label style={{ marginLeft: 12 }}>
-          <input type="checkbox" checked={splitFirstLine} onChange={(e) => setSplitFirstLine(e.target.checked)} /> Split first line
+        {/* show PO number input only when PO-based mode is selected */}
+        {mode === "po" && (
+          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            PO Number:
+            <input value={poNumber} onChange={(e) => setPoNumber(e.target.value)} style={{ marginLeft: 8 }} />
+          </label>
+        )}
+
+        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input type="checkbox" checked={splitLineItem} onChange={(e) => setSplitLineItem(e.target.checked)} />
+          Split line item
         </label>
 
-        <button onClick={handleGenerate} disabled={loadingGen} style={{ marginLeft: 8 }}>
+        <button onClick={handleGenerate} disabled={loadingGen} style={{ marginLeft: "auto" }}>
           {loadingGen ? "Generating..." : "Generate"}
         </button>
       </div>
 
-      <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 18, marginBottom: 12 }}>
         <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input type="checkbox" checked={missMandatory} onChange={(e) => setMissMandatory(e.target.checked)} />
           Miss mandatory field
@@ -157,9 +167,13 @@ export default function SubmitInvoice() {
       />
 
       <div style={{ marginTop: 12 }}>
-        <button onClick={handleSubmitInvoice} disabled={loadingSubmit}>{loadingSubmit ? "Submitting..." : "Submit Invoice"}</button>
-        <button onClick={() => { setJsonText("{}"); setStatusMsg("Cleared"); }} style={{ marginLeft: 8 }}>Clear</button>
-        <div style={{ marginTop: 8 }}>{statusMsg}</div>
+        <button onClick={handleSubmitInvoice} disabled={loadingSubmit} style={{ padding: "8px 12px" }}>
+          {loadingSubmit ? "Submitting..." : "Submit Invoice"}
+        </button>
+        <button onClick={() => { setJsonText("{}"); setStatusMsg("Cleared"); }} style={{ marginLeft: 8, padding: "8px 12px" }}>
+          Clear
+        </button>
+        <div style={{ marginTop: 10 }}>{statusMsg}</div>
       </div>
     </div>
   );
