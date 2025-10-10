@@ -12,11 +12,19 @@ import asyncio
 
 router = APIRouter()
 
+# helper synchronous wrappers for PyMongo calls (run via asyncio.to_thread)
+def _find_one_sync(coll, q):
+    return coll.find_one(q)
+
+def _count_sync(coll, q=None):
+    if q is None:
+        q = {}
+    return coll.count_documents(q)
+
 # SSE helper
 def format_sse(event: str, data: dict):
-    # event: event name, data: JSON-serializable
     payload = f"event: {event}\n"
-    payload += f"data: {json.dumps(data)}\n\n"
+    payload += f"data: {json.dumps(data, default=str)}\n\n"
     return payload
 
 def ensure_minimal_structure(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -215,44 +223,67 @@ async def list_invoices(limit: int = Query(50, ge=1, le=1000), q: Optional[str] 
 @router.get("/invoices/{invoice_id}/events", response_class=JSONResponse)
 async def invoice_events(request: Request, invoice_id: str):
     """
-    SSE endpoint streaming invoice workflow updates.
-    The generator polls the invoice doc and yields new steps.
+    SSE streaming endpoint for invoice workflow updates.
+    NOTE: uses asyncio.to_thread(...) to call blocking PyMongo safely.
     """
 
+    db = get_db()
+
     async def event_generator():
-        db = get_db()
-        # fetch initial invoice to get baseline
-        inv = await db.invoices.find_one({"_id": invoice_id})
-        last_steps_len = len(inv.get("_workflow", {}).get("steps", [])) if inv else 0
+        # initial fetch (blocking via to_thread)
+        try:
+            inv = await asyncio.to_thread(_find_one_sync, db.invoices, {"_id": invoice_id})
+        except Exception as e:
+            # DB error — send an error event then stop
+            yield format_sse("error", {"message": "DB error", "detail": str(e)})
+            return
 
-        # immediately send current state (optional)
+        last_steps_len = 0
         if inv:
-            yield format_sse("init", {"invoice_id": invoice_id, "workflow": inv.get("_workflow", {})})
+            wf = inv.get("_workflow", {}) or {}
+            steps = wf.get("steps", []) or []
+            last_steps_len = len(steps)
+            # send initial snapshot to client
+            yield format_sse("init", {"invoice_id": invoice_id, "workflow": wf, "created_at": inv.get("created_at")})
+        else:
+            # invoice not found initially; tell client and continue waiting (or break)
+            yield format_sse("not_found", {"invoice_id": invoice_id})
+            # still continue — maybe invoice will be created soon
 
-        # poll loop
-        while True:
-            # disconnect check (client closed)
-            if await request.is_disconnected():
-                break
+        # Poll loop: check for new steps periodically
+        try:
+            while True:
+                # Stop streaming if client disconnected
+                if await request.is_disconnected():
+                    break
 
-            inv = await db.invoices.find_one({"_id": invoice_id})
-            if not inv:
-                # invoice removed -> inform client and break
-                yield format_sse("deleted", {"invoice_id": invoice_id})
-                break
+                # fetch current invoice doc
+                inv = await asyncio.to_thread(_find_one_sync, db.invoices, {"_id": invoice_id})
+                if not inv:
+                    # invoice deleted or not yet created
+                    # send a not_found event and continue polling (or break if you prefer)
+                    yield format_sse("not_found", {"invoice_id": invoice_id})
+                    await asyncio.sleep(1.0)
+                    continue
 
-            steps = inv.get("_workflow", {}).get("steps", [])
-            if len(steps) > last_steps_len:
-                # send only the new steps
-                new_steps = steps[last_steps_len:]
-                for s in new_steps:
-                    # send each new step as separate 'step' event
-                    yield format_sse("step", {"invoice_id": invoice_id, "step": s})
-                last_steps_len = len(steps)
+                wf = inv.get("_workflow", {}) or {}
+                steps = wf.get("steps", []) or []
+                if len(steps) > last_steps_len:
+                    new_steps = steps[last_steps_len:]
+                    for s in new_steps:
+                        # send individual step events
+                        yield format_sse("step", {"invoice_id": invoice_id, "step": s})
+                    last_steps_len = len(steps)
 
-            # also notify if status changed (to update badges)
-            # optional: send a summary heartbeat every X seconds
-            await asyncio.sleep(0.8)  # poll frequency: 0.5-1s is reasonable for demo
+                # Optionally also report status heartbeat if you want
+                await asyncio.sleep(0.8)  # poll frequency (adjust as needed)
+        except asyncio.CancelledError:
+            # client disconnected or server shutting down
+            return
+        except Exception as e:
+            # unexpected error - notify client then exit
+            yield format_sse("error", {"message": "stream error", "detail": str(e)})
+            return
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
