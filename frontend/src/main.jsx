@@ -8,6 +8,8 @@ import Invoices from "./pages/Invoices";
 import InvoiceDetail from "./pages/InvoiceDetail";
 import SubmitInvoice from "./pages/SubmitInvoice";
 import Tasks from "./pages/Tasks";
+import Vendors from "./pages/Vendors";
+import POs from "./pages/POs";
 
 const rootEl = document.getElementById("root");
 if (!rootEl) {
@@ -24,6 +26,8 @@ createRoot(rootEl).render(
           <Route path="invoices/:id" element={<InvoiceDetail />} />
           <Route path="submit" element={<SubmitInvoice />} />
           <Route path="tasks" element={<Tasks />} />
+          <Route path="vendors" element={<Vendors />} />
+          <Route path="pos" element={<POs />} />
           {/* fallback route to Home for unknown routes */}
           <Route path="*" element={<Home />} />
         </Route>

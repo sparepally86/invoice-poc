@@ -25,6 +25,8 @@ export default function App() {
         <h2 style={{ marginTop: 0 }}>Invoice POC</h2>
         <NavItem to="/">Home</NavItem>
         <NavItem to="/invoices">Invoices</NavItem>
+        <NavItem to="/vendors">Vendors</NavItem>
+        <NavItem to="/pos">POs</NavItem>
         <NavItem to="/submit">Submit Invoice</NavItem>
         <NavItem to="/tasks">Tasks (HITL)</NavItem>
 

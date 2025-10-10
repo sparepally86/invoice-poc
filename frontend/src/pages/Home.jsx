@@ -17,7 +17,7 @@ export default function Home() {
         let s = { invoices: invoices.length, pending: 0, approved: 0, tasks: Array.isArray(tasks) ? tasks.length : 0 };
         for (const inv of invoices) {
           if (inv.status === "PENDING_APPROVAL" || inv.status === "EXCEPTION") s.pending++;
-          if (inv.status === "APPROVED" || inv.status === "POSTED") s.approved++;
+          if (["APPROVED", "READY_FOR_POSTING", "POSTED"].includes(inv.status)) s.approved++;
         }
         if (!cancelled) setStats(s);
       } catch (err) {

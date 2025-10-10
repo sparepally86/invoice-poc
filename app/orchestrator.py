@@ -61,6 +61,7 @@ async def process_task(task):
       - Otherwise run PO matching (if po present) and behave as before
       - If PO matched -> run CodingAgent, persist result, update status or create human_review
       - After coding/matching run Risk & Approval Agent to auto-approve or create approval task
+      - If no human tasks created and no exceptions, mark READY_FOR_POSTING
     """
     db = get_db()
 
@@ -79,6 +80,9 @@ async def process_task(task):
         if not invoice:
             await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "error", "error": "invoice_not_found"}})
             return
+
+        # Track if we created a human task (then we will not auto-finalize)
+        human_task_created = False
 
         # --- 1) Validation ---
         validation_out = await asyncio.to_thread(run_validation, db, invoice)
@@ -105,9 +109,12 @@ async def process_task(task):
                 }
             }
             await asyncio.to_thread(db.tasks.insert_one, human_task)
+            human_task_created = True
 
             # finish original task as done
             await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "done", "finished_at": now}})
+
+            # We stop further processing for this invoice until human acts
             return
 
         # --- 2) PO Matching (only if validated) ---
@@ -141,6 +148,7 @@ async def process_task(task):
                     }
                 }
                 await asyncio.to_thread(db.tasks.insert_one, human_task)
+                human_task_created = True
 
                 # finish original processing task
                 await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "done", "finished_at": now}})
@@ -168,10 +176,11 @@ async def process_task(task):
                         # persist risk output
                         await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": risk_out}})
 
-                        # If risk decided auto_approve -> mark APPROVED
+                        # If risk decided auto_approve -> mark READY_FOR_POSTING
                         if risk_out.get("decision") == "auto_approve":
-                            await asyncio.to_thread(update_invoice_status, db, invoice_id, "APPROVED", "RiskApprovalAgent", note="Auto-approved by risk rules")
-                            # optionally, create a posting task here (future)
+                            await asyncio.to_thread(update_invoice_status, db, invoice_id, "READY_FOR_POSTING", "RiskApprovalAgent", note="Auto-approved by risk rules")
+                            # We consider human_task_created still False; we will finalize below
+
                         elif risk_out.get("status") == "needs_human" or risk_out.get("next_agent") == "ApprovalAgent":
                             # create human approval task entry
                             now = datetime.datetime.utcnow().isoformat() + "Z"
@@ -187,6 +196,7 @@ async def process_task(task):
                                 }
                             }
                             await asyncio.to_thread(db.tasks.insert_one, approver_task)
+                            human_task_created = True
                             # set invoice status PENDING_APPROVAL
                             await asyncio.to_thread(update_invoice_status, db, invoice_id, "PENDING_APPROVAL", "Orchestrator", note="Approval task created")
                             # finish original processing task
@@ -216,6 +226,7 @@ async def process_task(task):
                         }
                     }
                     await asyncio.to_thread(db.tasks.insert_one, human_task)
+                    human_task_created = True
                     # set invoice to EXCEPTION (or keep MATCHED and flag coding pending)
                     await asyncio.to_thread(update_invoice_status, db, invoice_id, "EXCEPTION", "Orchestrator", note="Coding partial - human review created")
                     # finish original processing task
@@ -233,7 +244,27 @@ async def process_task(task):
                 await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": err_step}})
                 # continue — do not block overall pipeline; leave invoice in MATCHED state
 
-        # If no PO or PO matched and coding (if any) completed, mark original task done
+        # At this point: either there was no PO, or PO matched + coding (if any) handled.
+        # If no human tasks were created and invoice is not in an exception/pending state,
+        # mark it READY_FOR_POSTING so it can be posted later by ERP integration or considered final.
+        try:
+            invoice_latest = await asyncio.to_thread(db.invoices.find_one, {"_id": invoice_id})
+            current_status = (invoice_latest.get("status") if invoice_latest else None)
+            # Do not override statuses that require human action or are already final
+            if not human_task_created and current_status not in ("PENDING_APPROVAL", "EXCEPTION", "REJECTED", "READY_FOR_POSTING", "POSTED"):
+                await asyncio.to_thread(update_invoice_status, db, invoice_id, "READY_FOR_POSTING", "Orchestrator", note="All agents completed — ready for posting")
+        except Exception as _e:
+            # If status update fails, persist a workflow step but continue
+            err_step = {
+                "agent": "Orchestrator",
+                "invoice_id": invoice_id,
+                "status": "failed_to_set_final_status",
+                "result": {"error": str(_e)},
+                "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+            }
+            await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": err_step}})
+
+        # If no early returns were triggered, mark original task done
         now = datetime.datetime.utcnow().isoformat() + "Z"
         await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "done", "finished_at": now}})
         return
