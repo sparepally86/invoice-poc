@@ -4,7 +4,8 @@ import datetime
 from app.storage.mongo_client import get_db
 from app.agents.validation import run_validation   # adjust import path if different
 from app.agents.po_match import run_po_matching   # adjust import path if different
-from app.agents.coding import run_coding         # new: coding agent
+from app.agents.coding import run_coding         # coding agent
+from app.agents.risk import run_risk_and_approval  # risk & approval agent
 from app.utils.state import update_invoice_status  # centralized status helper
 
 _worker_task = None
@@ -59,6 +60,7 @@ async def process_task(task):
       - If validation requires human -> create human_review task and finish
       - Otherwise run PO matching (if po present) and behave as before
       - If PO matched -> run CodingAgent, persist result, update status or create human_review
+      - After coding/matching run Risk & Approval Agent to auto-approve or create approval task
     """
     db = get_db()
 
@@ -158,6 +160,47 @@ async def process_task(task):
                 if coding_status == "completed":
                     # mark CODED (uses centralized state helper)
                     await asyncio.to_thread(update_invoice_status, db, invoice_id, "CODED", "Orchestrator", note="Coding applied")
+
+                    # --- 4) RISK & APPROVAL (run after CODED) ---
+                    try:
+                        invoice = await asyncio.to_thread(db.invoices.find_one, {"_id": invoice_id})
+                        risk_out = await asyncio.to_thread(run_risk_and_approval, db, invoice)
+                        # persist risk output
+                        await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": risk_out}})
+
+                        # If risk decided auto_approve -> mark APPROVED
+                        if risk_out.get("decision") == "auto_approve":
+                            await asyncio.to_thread(update_invoice_status, db, invoice_id, "APPROVED", "RiskApprovalAgent", note="Auto-approved by risk rules")
+                            # optionally, create a posting task here (future)
+                        elif risk_out.get("status") == "needs_human" or risk_out.get("next_agent") == "ApprovalAgent":
+                            # create human approval task entry
+                            now = datetime.datetime.utcnow().isoformat() + "Z"
+                            approver_task = {
+                                "type": "approval",
+                                "invoice_id": invoice_id,
+                                "status": "pending",
+                                "created_at": now,
+                                "payload": {
+                                    "agent": risk_out.get("agent", "RiskApprovalAgent"),
+                                    "agent_result": risk_out.get("result", risk_out),
+                                    "suggested_approver": risk_out.get("result", {}).get("suggested_approver", "manager")
+                                }
+                            }
+                            await asyncio.to_thread(db.tasks.insert_one, approver_task)
+                            # set invoice status PENDING_APPROVAL
+                            await asyncio.to_thread(update_invoice_status, db, invoice_id, "PENDING_APPROVAL", "Orchestrator", note="Approval task created")
+                            # finish original processing task
+                            await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "done", "finished_at": now}})
+                            return
+                    except Exception as e:
+                        err_step = {
+                            "agent": "RiskApprovalAgent",
+                            "invoice_id": invoice_id,
+                            "status": "failed",
+                            "result": {"error": str(e)},
+                            "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+                        }
+                        await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": err_step}})
                 elif coding_status in ("partial", "failed"):
                     # create human task for coding
                     now = datetime.datetime.utcnow().isoformat() + "Z"
