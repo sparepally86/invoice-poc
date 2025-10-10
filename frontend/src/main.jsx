@@ -8,7 +8,12 @@ import Invoices from "./pages/Invoices";
 import SubmitInvoice from "./pages/SubmitInvoice";
 import Tasks from "./pages/Tasks";
 
-createRoot(document.getElementById("root")).render(
+const rootEl = document.getElementById("root");
+if (!rootEl) {
+  throw new Error("Root element not found");
+}
+
+createRoot(rootEl).render(
   <React.StrictMode>
     <BrowserRouter>
       <Routes>
@@ -17,6 +22,8 @@ createRoot(document.getElementById("root")).render(
           <Route path="invoices" element={<Invoices />} />
           <Route path="submit" element={<SubmitInvoice />} />
           <Route path="tasks" element={<Tasks />} />
+          {/* fallback route to Home for unknown routes */}
+          <Route path="*" element={<Home />} />
         </Route>
       </Routes>
     </BrowserRouter>
