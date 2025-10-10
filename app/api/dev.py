@@ -7,6 +7,7 @@ import uuid
 import datetime
 import httpx
 import os
+import random
 
 router = APIRouter()
 
@@ -81,51 +82,88 @@ def build_invoice_from_po(
     return invoice
 
 @router.post("/dev/generate-invoice", response_class=JSONResponse)
-async def generate_invoice(
-    po_number: str,
-    invoice_ref: Optional[str] = None,
-    buyer_companycode: str = "1000",
-    currency: str = "INR",
-    split_first_line: bool = False,
-    post_to_incoming: bool = Query(False, description="If true, POST the generated invoice to /api/v1/incoming"),
-):
+async def generate_invoice(po_number: str | None = Query(None), split_first_line: bool | None = Query(False)):
     """
-    Generate an invoice JSON based on a PO.
-    Query params:
-      - po_number (required)
-      - invoice_ref (optional)
-      - buyer_companycode (defaults to 1000)
-      - currency (defaults to INR)
-      - split_first_line (bool) -> if true, create two items from first line with 1000/2000 split
-      - post_to_incoming (bool) -> if true, POST to /api/v1/incoming (internal)
+    Dev helper: generate a synthetic invoice.
+    - If po_number is provided, build invoice from that PO (existing behavior).
+    - If po_number is not provided, create a non-PO invoice using an existing vendor (random) or a fallback.
     """
+
     db = get_db()
-    coll = db.get_collection("pos")
-    po_doc = coll.find_one({"_id": po_number})
-    if not po_doc:
-        raise HTTPException(status_code=404, detail=f"PO not found: {po_number}")
 
-    invoice = build_invoice_from_po(
-        po_doc=po_doc,
-        erpsystem="ecc",
-        source="capture",
-        buyer_companycode=buyer_companycode,
-        invoice_ref=invoice_ref,
-        currency=currency,
-        split_first_line=split_first_line,
-    )
+    try:
+        if po_number:
+            # existing PO-based flow: try to fetch the PO and its vendor
+            po_doc = await db.pos.find_one({"po_number": po_number})
+            if not po_doc:
+                # Return a clear error (but 422 was previous behaviour) — choose 404 or 422 as you prefer
+                raise HTTPException(status_code=422, detail=f"PO not found: {po_number}")
 
-    incoming_response = None
-    if post_to_incoming:
-        # Post to the incoming endpoint of this service
-        incoming_url = os.environ.get("INTERNAL_INCOMING_URL") or "http://localhost:8000/api/v1/incoming"
-        # If running in the same Render service, construct from the public host if provided:
-        # You can set INTERNAL_INCOMING_URL in Render env to https://invoice-poc-1gpt.onrender.com
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            try:
-                r = await client.post(incoming_url, json=invoice)
-                incoming_response = {"status_code": r.status_code, "body": r.json() if r.status_code < 500 else r.text}
-            except Exception as e:
-                incoming_response = {"error": str(e)}
+            # get vendor if present on PO
+            vendor_id = po_doc.get("vendor_id") or po_doc.get("vendor_number")
+            vendor = None
+            if vendor_id:
+                vendor = await db.vendors.find_one({"vendor_id": vendor_id}) or await db.vendors.find_one({"_id": vendor_id})
 
-    return JSONResponse({"generated_invoice": invoice, "posted_to_incoming": incoming_response})
+            # build invoice header and items based on PO
+            items = []
+            po_lines = po_doc.get("lines", [])
+            for ln in po_lines:
+                items.append({
+                    "item_text": ln.get("item_text") or ln.get("description") or ln.get("name"),
+                    "quantity": ln.get("quantity") or ln.get("qty") or 1,
+                    "amount": ln.get("amount") or (ln.get("unit_price") or 0) * (ln.get("quantity") or 1),
+                })
+
+            total_amount = sum((it.get("amount") or 0) for it in items)
+
+            header = {
+                "po_number": po_number,
+                "invoice_ref": f"GEN-{random.randint(10000,99999)}",
+                "invoice_date": datetime.datetime.utcnow().date().isoformat(),
+                "vendor_number": vendor.get("vendor_id") if vendor else (po_doc.get("vendor_id") or "UNKNOWN"),
+                "vendor_name": vendor.get("name_raw") if vendor else po_doc.get("vendor_name", "Unknown Vendor"),
+                "currency": po_doc.get("currency", "INR"),
+                "amount": total_amount
+            }
+
+            generated = {"header": header, "items": items}
+            return {"generated_invoice": generated}
+
+        else:
+            # Non-PO flow: pick a random vendor or fallback to first vendor
+            vendor = await db.vendors.find_one({})
+            if not vendor:
+                # If no vendors exist in DB, return a useful 422 with message
+                raise HTTPException(status_code=422, detail="No vendors found in Vendor master — create some vendors first")
+
+            # Create a simple invoice with 1-2 lines
+            num_lines = 2 if split_first_line else 1
+            items = []
+            for i in range(num_lines):
+                qty = random.choice([1, 2, 3])
+                unit_price = random.choice([1000, 2500, 5000])
+                items.append({
+                    "item_text": f"Synthetic line {i+1}",
+                    "quantity": qty,
+                    "amount": qty * unit_price
+                })
+
+            total_amount = sum(it["amount"] for it in items)
+            header = {
+                "invoice_ref": f"GEN-NP-{random.randint(1000,9999)}",
+                "invoice_date": datetime.datetime.utcnow().date().isoformat(),
+                "vendor_number": vendor.get("vendor_id") or vendor.get("_id"),
+                "vendor_name": vendor.get("name_raw") or vendor.get("name") or "Vendor",
+                "currency": vendor.get("currency", "INR"),
+                "amount": total_amount,
+            }
+
+            generated = {"header": header, "items": items}
+            return {"generated_invoice": generated}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Unexpected error -> helpful 500
+        raise HTTPException(status_code=500, detail=f"Generator error: {str(e)}")
