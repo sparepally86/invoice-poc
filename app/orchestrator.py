@@ -4,6 +4,8 @@ import datetime
 from app.storage.mongo_client import get_db
 from app.agents.validation import run_validation   # adjust import path if different
 from app.agents.po_match import run_po_matching   # adjust import path if different
+from app.agents.coding import run_coding         # new: coding agent
+from app.utils.state import update_invoice_status  # centralized status helper
 
 _worker_task = None
 _PEAK_SLEEP = 0.8
@@ -56,6 +58,7 @@ async def process_task(task):
       - Persist validation result to invoice._workflow.steps
       - If validation requires human -> create human_review task and finish
       - Otherwise run PO matching (if po present) and behave as before
+      - If PO matched -> run CodingAgent, persist result, update status or create human_review
     """
     db = get_db()
 
@@ -83,9 +86,7 @@ async def process_task(task):
 
         # compute status and set via helper
         new_status = "VALIDATED" if validation_out.get("status") == "completed" else "EXCEPTION"
-        from app.utils.state import update_invoice_status
         await asyncio.to_thread(update_invoice_status, db, invoice_id, new_status, "Orchestrator", note="Validation result applied")
-
 
         # If validation indicates human required (status not 'completed') -> create human task
         if validation_out.get("status") != "completed":
@@ -120,9 +121,8 @@ async def process_task(task):
             await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": po_out}})
 
             # set status via helper
-            new_status = "MATCHED" if po_out.get("status") == "matched" else "EXCEPTION"
-            from app.utils.state import update_invoice_status
-            await asyncio.to_thread(update_invoice_status, db, invoice_id, new_status, "Orchestrator", note="PO matching result applied")
+            matched_status = "MATCHED" if po_out.get("status") == "matched" else "EXCEPTION"
+            await asyncio.to_thread(update_invoice_status, db, invoice_id, matched_status, "Orchestrator", note="PO matching result applied")
 
             # If PO matching produced issues (partial_match), create a human_review task
             if po_out.get("status") != "matched":
@@ -142,11 +142,59 @@ async def process_task(task):
 
                 # finish original processing task
                 await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "done", "finished_at": now}})
+
+                # Since PO mismatch, we stop and wait for human review
                 return
 
-        # If no PO or PO matched, mark original task done
+            # --- 3) CODING (only if PO matched) ---
+            # re-fetch invoice again to include any PO-match annotations
+            invoice = await asyncio.to_thread(db.invoices.find_one, {"_id": invoice_id})
+            try:
+                coding_out = await asyncio.to_thread(run_coding, db, invoice)
+                # persist coding agent output to workflow
+                await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": coding_out}})
+
+                coding_status = coding_out.get("status")
+                if coding_status == "completed":
+                    # mark CODED (uses centralized state helper)
+                    await asyncio.to_thread(update_invoice_status, db, invoice_id, "CODED", "Orchestrator", note="Coding applied")
+                elif coding_status in ("partial", "failed"):
+                    # create human task for coding
+                    now = datetime.datetime.utcnow().isoformat() + "Z"
+                    human_task = {
+                        "type": "human_review",
+                        "invoice_id": invoice_id,
+                        "status": "pending",
+                        "created_at": now,
+                        "payload": {
+                            "agent": coding_out.get("agent", "CodingAgent"),
+                            "agent_result": coding_out.get("result", coding_out),
+                            "reason": "coding_partial_or_failed"
+                        }
+                    }
+                    await asyncio.to_thread(db.tasks.insert_one, human_task)
+                    # set invoice to EXCEPTION (or keep MATCHED and flag coding pending)
+                    await asyncio.to_thread(update_invoice_status, db, invoice_id, "EXCEPTION", "Orchestrator", note="Coding partial - human review created")
+                    # finish original processing task
+                    await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "done", "finished_at": now}})
+                    return
+            except Exception as e:
+                # persist a failure step so we can inspect later
+                err_step = {
+                    "agent": "CodingAgent",
+                    "invoice_id": invoice_id,
+                    "status": "failed",
+                    "result": {"error": str(e)},
+                    "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+                }
+                await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": err_step}})
+                # continue — do not block overall pipeline; leave invoice in MATCHED state
+
+        # If no PO or PO matched and coding (if any) completed, mark original task done
         now = datetime.datetime.utcnow().isoformat() + "Z"
         await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "done", "finished_at": now}})
+        return
+
     except Exception as e:
         # Log error into the task doc for diagnosability
         try:
@@ -154,5 +202,9 @@ async def process_task(task):
         except Exception:
             pass
 
-    now = datetime.datetime.utcnow().isoformat() + "Z"
-    await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "done", "finished_at": now}})
+        # ensure task is marked done/failed with timestamp
+        now = datetime.datetime.utcnow().isoformat() + "Z"
+        try:
+            await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "error", "finished_at": now}})
+        except Exception:
+            pass
