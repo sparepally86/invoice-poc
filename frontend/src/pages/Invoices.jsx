@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from "react";
 import api from "../lib/api";
 import JourneyModal from "../components/JourneyModal";
+import { Link, useNavigate } from "react-router-dom";
 
 export default function Invoices() {
   const [invoices, setInvoices] = useState([]);
@@ -64,7 +65,20 @@ export default function Invoices() {
               <td style={{ padding: 8 }}>{inv.status}</td>
               <td style={{ padding: 8 }}>
                 <button onClick={() => setSelectedSteps(inv._workflow?.steps || [])}>Journey</button>
-                <a style={{ marginLeft: 8 }} href={`/invoices/${encodeURIComponent(inv._id || inv.header?.invoice_ref)}`}><button>Open</button></a>
+                <Link
+                    to={`/invoices/${inv._id || inv.header?.invoice_ref}`}
+                    style={{
+                    padding: "6px 10px",
+                    border: "1px solid #d1d5db",
+                    borderRadius: 6,
+                    background: "#f9fafb",
+                    textDecoration: "none",
+                    color: "#111827",
+                    marginRight: 8,
+                    }}
+                >
+                    Open
+                </Link>
               </td>
             </tr>
           ))}
