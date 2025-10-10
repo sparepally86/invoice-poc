@@ -1,5 +1,6 @@
 // src/pages/Vendors.jsx
 import React, { useEffect, useState } from "react";
+
 const BACKEND = (import.meta.env.VITE_BACKEND_URL || "").replace(/\/$/, "") || "https://invoice-poc-1gpt.onrender.com";
 
 export default function Vendors() {
@@ -15,7 +16,8 @@ export default function Vendors() {
       try {
         const resp = await fetch(`${BACKEND}/api/v1/vendors`);
         const data = await resp.json();
-        const items = Array.isArray(data) ? data : data.items || [];
+        // Support both shapes: { vendors: [...] } or an array
+        const items = Array.isArray(data) ? data : (data.vendors || data.items || []);
         if (!cancelled) setVendors(items);
       } catch (e) {
         if (!cancelled) setErr(String(e));

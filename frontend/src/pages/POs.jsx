@@ -20,7 +20,8 @@ export default function POs() {
       try {
         const resp = await fetch(`${BACKEND}/api/v1/pos`);
         const data = await resp.json();
-        const items = Array.isArray(data) ? data : data.items || [];
+        // Support both shapes: { pos: [...] } or an array
+        const items = Array.isArray(data) ? data : (data.pos || data.items || []);
         if (!cancelled) setPos(items);
       } catch (e) {
         if (!cancelled) setErr(String(e));
