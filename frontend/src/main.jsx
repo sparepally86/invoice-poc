@@ -20,6 +20,7 @@ createRoot(rootEl).render(
         <Route path="/" element={<App />}>
           <Route index element={<Home />} />
           <Route path="invoices" element={<Invoices />} />
+          <Route path="invoices/:id" element={<InvoiceDetail />} />
           <Route path="submit" element={<SubmitInvoice />} />
           <Route path="tasks" element={<Tasks />} />
           {/* fallback route to Home for unknown routes */}
