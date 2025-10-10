@@ -122,7 +122,7 @@ export default function SubmitInvoice() {
       <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 12 }}>
         <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input type="radio" name="mode" value="po" checked={mode === "po"} onChange={() => setMode("po")} />
-          PO-based (backend chooses random PO if none specified)
+          PO-based
         </label>
 
         <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
