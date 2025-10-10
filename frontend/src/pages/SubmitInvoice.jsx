@@ -1,77 +1,77 @@
-// src/pages/Invoices.jsx
-import React, { useEffect, useState } from "react";
+// src/pages/SubmitInvoice.jsx
+import React, { useState } from "react";
 import api from "../lib/api";
-import JourneyModal from "../components/JourneyModal";
 
-export default function Invoices() {
-  const [invoices, setInvoices] = useState([]);
-  const [q, setQ] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [selectedSteps, setSelectedSteps] = useState(null);
+export default function SubmitInvoice() {
+  const [poNumber, setPoNumber] = useState("PO-1001");
+  const [splitFirstLine, setSplitFirstLine] = useState(true);
+  const [jsonText, setJsonText] = useState(`{
+  "header": {
+    "invoice_ref": "TEST-1",
+    "invoice_date": "2025-10-10",
+    "vendor_number": "V0001",
+    "vendor_name": "Vendor 1",
+    "currency": "INR",
+    "amount": 1000
+  },
+  "items": []
+}`);
+  const [statusMsg, setStatusMsg] = useState(null);
+  const [loadingGen, setLoadingGen] = useState(false);
+  const [loadingSubmit, setLoadingSubmit] = useState(false);
 
-  async function load(qstr = "") {
-    setLoading(true);
+  async function handleGenerate() {
+    setStatusMsg(null);
+    setLoadingGen(true);
     try {
-      // backend may not support search param 'q'; we pass as query and handle server side if implemented
-      const data = await api.getInvoices({ q: qstr, limit: 200 });
-      // if server returns object with items, handle it
-      const items = Array.isArray(data) ? data : (data.items || data.invoices || []);
-      setInvoices(items);
-    } catch (e) {
-      console.error(e);
-      setInvoices([]);
+      const resp = await api.generateInvoice(poNumber, splitFirstLine);
+      const generated = resp?.generated_invoice || resp;
+      setJsonText(JSON.stringify(generated, null, 2));
+      setStatusMsg("Generated invoice");
+    } catch (err) {
+      console.error(err);
+      setStatusMsg("Generation failed: " + (err?.message || JSON.stringify(err)));
     } finally {
-      setLoading(false);
+      setLoadingGen(false);
     }
   }
 
-  useEffect(() => { load(); }, []);
-
-  const onSearch = async () => { await load(q); };
+  async function handleSubmit() {
+    setStatusMsg(null);
+    setLoadingSubmit(true);
+    try {
+      const payload = JSON.parse(jsonText);
+      const resp = await api.postIncoming(payload);
+      setStatusMsg("Submitted: " + JSON.stringify(resp));
+    } catch (err) {
+      console.error(err);
+      setStatusMsg("Submit error: " + (err?.response?.data || err.message));
+    } finally {
+      setLoadingSubmit(false);
+    }
+  }
 
   return (
     <div>
-      <h1>Invoices</h1>
+      <h1>Submit Invoice (Capture simulation)</h1>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search invoice_ref or PO number" style={{ padding: 8, flex: 1 }} />
-        <button onClick={onSearch}>Search</button>
-        <button onClick={() => load("")}>Clear</button>
+        <label>
+          PO Number: <input value={poNumber} onChange={(e) => setPoNumber(e.target.value)} style={{ marginLeft: 8 }} />
+        </label>
+        <label style={{ marginLeft: 12 }}>
+          <input type="checkbox" checked={splitFirstLine} onChange={(e) => setSplitFirstLine(e.target.checked)} /> Split first line
+        </label>
+        <button onClick={handleGenerate} disabled={loadingGen}>{loadingGen ? "Generating..." : "Generate"}</button>
       </div>
 
-      <table style={{ width: "100%", borderCollapse: "collapse", background: "#fff" }}>
-        <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>
-            <th style={{ padding: 8 }}>Invoice Ref</th>
-            <th style={{ padding: 8 }}>Vendor</th>
-            <th style={{ padding: 8 }}>PO</th>
-            <th style={{ padding: 8 }}>Amount</th>
-            <th style={{ padding: 8 }}>Status</th>
-            <th style={{ padding: 8 }}>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {loading ? (
-            <tr><td colSpan={6}>Loading…</td></tr>
-          ) : invoices.length === 0 ? (
-            <tr><td colSpan={6}>No invoices</td></tr>
-          ) : invoices.map(inv => (
-            <tr key={inv._id || inv.header?.invoice_ref} style={{ borderBottom: "1px solid #f3f4f6" }}>
-              <td style={{ padding: 8 }}>{inv.header?.invoice_ref || inv._id}</td>
-              <td style={{ padding: 8 }}>{inv.vendor?.name_raw || inv.header?.vendor_name || "-"}</td>
-              <td style={{ padding: 8 }}>{inv.header?.po_number || inv.header?.po || "-"}</td>
-              <td style={{ padding: 8 }}>{inv.header?.grand_total?.value ?? inv.header?.amount ?? "-"}</td>
-              <td style={{ padding: 8 }}>{inv.status}</td>
-              <td style={{ padding: 8 }}>
-                <button onClick={() => setSelectedSteps(inv._workflow?.steps || [])}>Journey</button>
-                <a style={{ marginLeft: 8 }} href={`/invoices/${encodeURIComponent(inv._id || inv.header?.invoice_ref)}`}><button>Open</button></a>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <textarea rows={16} value={jsonText} onChange={(e) => setJsonText(e.target.value)} style={{ width: "100%", fontFamily: "monospace", padding: 12 }} />
 
-      <JourneyModal open={!!selectedSteps} onClose={() => setSelectedSteps(null)} steps={selectedSteps || []} />
+      <div style={{ marginTop: 12 }}>
+        <button onClick={handleSubmit} disabled={loadingSubmit}>{loadingSubmit ? "Submitting..." : "Submit Invoice"}</button>
+        <button onClick={() => { setJsonText("{}"); setStatusMsg("Cleared"); }} style={{ marginLeft: 8 }}>Clear</button>
+        <div style={{ marginTop: 8 }}>{statusMsg}</div>
+      </div>
     </div>
   );
 }
