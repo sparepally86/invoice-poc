@@ -5,6 +5,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import App from "./App";
 import Home from "./pages/Home";
 import Invoices from "./pages/Invoices";
+import InvoiceDetail from "./pages/InvoiceDetail";
 import SubmitInvoice from "./pages/SubmitInvoice";
 import Tasks from "./pages/Tasks";
 
