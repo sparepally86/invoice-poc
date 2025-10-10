@@ -156,6 +156,7 @@ async def get_invoice(invoice_id: str):
 
     raise HTTPException(status_code=404, detail=f"invoice not found for id/ref: {invoice_id}")
 
+
 @router.get("/invoices", response_class=JSONResponse)
 async def list_invoices(limit: int = Query(50, ge=1, le=1000), q: Optional[str] = Query(None)):
     """
@@ -200,3 +201,120 @@ async def list_invoices(limit: int = Query(50, ge=1, le=1000), q: Optional[str] 
         return JSONResponse({"items": docs})
     except Exception as e:
         return JSONResponse({"error": "list_failed", "detail": str(e)}, status_code=500)
+
+
+# ------------------------------
+# Helper for status + workflow updates
+# ------------------------------
+def _now_iso():
+    return datetime.utcnow().isoformat() + "Z"
+
+
+def _append_workflow_step_and_update_status(db, invoice_id: str, step: Dict[str, Any], new_status: Optional[str] = None):
+    """
+    Append a workflow step and optionally set status/updated_at.
+    This uses blocking pymongo client calls and is intended to be called directly (synchronously).
+    """
+    update_doc = {"$push": {"_workflow.steps": step}}
+    if new_status:
+        update_doc["$set"] = {"status": new_status, "updated_at": _now_iso()}
+    db.invoices.update_one({"_id": invoice_id}, update_doc)
+
+
+# ------------------------------
+# Approve / Reject endpoints
+# ------------------------------
+@router.post("/invoices/{invoice_id}/approve", response_class=JSONResponse)
+async def approve_invoice(invoice_id: str, payload: Dict[str, Any] = Body(None)):
+    """
+    Approve invoice via UI.
+
+    Body (optional):
+    {
+      "approver": "user:alice",
+      "comment": "Looks good"
+    }
+
+    Result: sets status -> READY_FOR_POSTING and appends workflow step.
+    """
+    body = payload or {}
+    approver = body.get("approver", "ui:unknown")
+    comment = body.get("comment", "")
+
+    db = get_db()
+
+    # fetch invoice
+    rec = db.invoices.find_one({"_id": invoice_id})
+    if not rec:
+        # try fallback lookups (as in get_invoice)
+        rec = db.invoices.find_one({"header.invoice_ref": invoice_id}) or db.invoices.find_one({"header.invoice_number.value": invoice_id})
+        if not rec:
+            raise HTTPException(status_code=404, detail="invoice_not_found")
+        invoice_id = rec.get("_id")
+
+    # workflow step
+    step = {
+        "agent": "HumanApprovalUI",
+        "type": "approve",
+        "invoice_id": invoice_id,
+        "actor": approver,
+        "result": {"action": "approve", "comment": comment},
+        "timestamp": _now_iso()
+    }
+
+    try:
+        _append_workflow_step_and_update_status(db, invoice_id, step, new_status="READY_FOR_POSTING")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"approve_failed: {e}")
+
+    updated = db.invoices.find_one({"_id": invoice_id})
+    if isinstance(updated.get("_id"), ObjectId):
+        updated["_id"] = str(updated["_id"])
+    return JSONResponse({"ok": True, "invoice": updated})
+
+
+@router.post("/invoices/{invoice_id}/reject", response_class=JSONResponse)
+async def reject_invoice(invoice_id: str, payload: Dict[str, Any] = Body(None)):
+    """
+    Reject invoice via UI.
+
+    Body:
+    {
+      "approver": "user:alice",
+      "reason": "wrong vendor / duplicate / mismatch"
+    }
+    Result: sets status -> REJECTED and appends workflow step.
+    """
+    body = payload or {}
+    approver = body.get("approver", "ui:unknown")
+    reason = body.get("reason", "")
+
+    db = get_db()
+
+    # fetch invoice
+    rec = db.invoices.find_one({"_id": invoice_id})
+    if not rec:
+        # try fallbacks
+        rec = db.invoices.find_one({"header.invoice_ref": invoice_id}) or db.invoices.find_one({"header.invoice_number.value": invoice_id})
+        if not rec:
+            raise HTTPException(status_code=404, detail="invoice_not_found")
+        invoice_id = rec.get("_id")
+
+    step = {
+        "agent": "HumanApprovalUI",
+        "type": "reject",
+        "invoice_id": invoice_id,
+        "actor": approver,
+        "result": {"action": "reject", "reason": reason},
+        "timestamp": _now_iso()
+    }
+
+    try:
+        _append_workflow_step_and_update_status(db, invoice_id, step, new_status="REJECTED")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"reject_failed: {e}")
+
+    updated = db.invoices.find_one({"_id": invoice_id})
+    if isinstance(updated.get("_id"), ObjectId):
+        updated["_id"] = str(updated["_id"])
+    return JSONResponse({"ok": True, "invoice": updated})
