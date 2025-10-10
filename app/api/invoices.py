@@ -6,9 +6,18 @@ from typing import Dict, Any, List, Optional
 import uuid
 from datetime import datetime
 from bson import ObjectId
+from starlette.responses import StreamingResponse
+import json
+import asyncio
 
 router = APIRouter()
 
+# SSE helper
+def format_sse(event: str, data: dict):
+    # event: event name, data: JSON-serializable
+    payload = f"event: {event}\n"
+    payload += f"data: {json.dumps(data)}\n\n"
+    return payload
 
 def ensure_minimal_structure(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -201,6 +210,51 @@ async def list_invoices(limit: int = Query(50, ge=1, le=1000), q: Optional[str] 
         return JSONResponse({"items": docs})
     except Exception as e:
         return JSONResponse({"error": "list_failed", "detail": str(e)}, status_code=500)
+
+# endpoint
+@router.get("/invoices/{invoice_id}/events", response_class=JSONResponse)
+async def invoice_events(request: Request, invoice_id: str):
+    """
+    SSE endpoint streaming invoice workflow updates.
+    The generator polls the invoice doc and yields new steps.
+    """
+
+    async def event_generator():
+        db = get_db()
+        # fetch initial invoice to get baseline
+        inv = await db.invoices.find_one({"_id": invoice_id})
+        last_steps_len = len(inv.get("_workflow", {}).get("steps", [])) if inv else 0
+
+        # immediately send current state (optional)
+        if inv:
+            yield format_sse("init", {"invoice_id": invoice_id, "workflow": inv.get("_workflow", {})})
+
+        # poll loop
+        while True:
+            # disconnect check (client closed)
+            if await request.is_disconnected():
+                break
+
+            inv = await db.invoices.find_one({"_id": invoice_id})
+            if not inv:
+                # invoice removed -> inform client and break
+                yield format_sse("deleted", {"invoice_id": invoice_id})
+                break
+
+            steps = inv.get("_workflow", {}).get("steps", [])
+            if len(steps) > last_steps_len:
+                # send only the new steps
+                new_steps = steps[last_steps_len:]
+                for s in new_steps:
+                    # send each new step as separate 'step' event
+                    yield format_sse("step", {"invoice_id": invoice_id, "step": s})
+                last_steps_len = len(steps)
+
+            # also notify if status changed (to update badges)
+            # optional: send a summary heartbeat every X seconds
+            await asyncio.sleep(0.8)  # poll frequency: 0.5-1s is reasonable for demo
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 # ------------------------------
