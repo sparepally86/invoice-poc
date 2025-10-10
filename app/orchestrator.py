@@ -79,14 +79,13 @@ async def process_task(task):
         validation_out = await asyncio.to_thread(run_validation, db, invoice)
 
         # persist validation output into invoice document under _workflow.steps
-        await asyncio.to_thread(
-            db.invoices.update_one,
-            {"_id": invoice_id},
-            {
-                "$push": {"_workflow.steps": validation_out},
-                "$set": {"status": "VALIDATED" if validation_out.get("status") == "completed" else "EXCEPTION"}
-            }
-        )
+        await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": validation_out}})
+
+        # compute status and set via helper
+        new_status = "VALIDATED" if validation_out.get("status") == "completed" else "EXCEPTION"
+        from app.utils.state import update_invoice_status
+        await asyncio.to_thread(update_invoice_status, db, invoice_id, new_status, "Orchestrator", note="Validation result applied")
+
 
         # If validation indicates human required (status not 'completed') -> create human task
         if validation_out.get("status") != "completed":
@@ -116,16 +115,14 @@ async def process_task(task):
 
         if po_number:
             po_out = await asyncio.to_thread(run_po_matching, db, invoice)
-            # persist PO matching
+
+            # persist PO matching result into workflow
+            await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": po_out}})
+
+            # set status via helper
             new_status = "MATCHED" if po_out.get("status") == "matched" else "EXCEPTION"
-            await asyncio.to_thread(
-                db.invoices.update_one,
-                {"_id": invoice_id},
-                {
-                    "$push": {"_workflow.steps": po_out},
-                    "$set": {"status": new_status}
-                }
-            )
+            from app.utils.state import update_invoice_status
+            await asyncio.to_thread(update_invoice_status, db, invoice_id, new_status, "Orchestrator", note="PO matching result applied")
 
             # If PO matching produced issues (partial_match), create a human_review task
             if po_out.get("status") != "matched":
@@ -156,3 +153,6 @@ async def process_task(task):
             await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "error", "error": str(e)}})
         except Exception:
             pass
+
+    now = datetime.datetime.utcnow().isoformat() + "Z"
+    await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "done", "finished_at": now}})
