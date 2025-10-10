@@ -6,7 +6,6 @@ const BACKEND = (import.meta.env.VITE_BACKEND_URL || "").replace(/\/$/, "") || "
 export default function SubmitInvoice() {
   // mode: "po" or "nonpo"
   const [mode, setMode] = useState("po");
-  const [poNumber, setPoNumber] = useState("PO-1001");
   const [splitLineItem, setSplitLineItem] = useState(true);
   const [jsonText, setJsonText] = useState(`{
   "header": {
@@ -32,17 +31,23 @@ export default function SubmitInvoice() {
     setStatusMsg(null);
     setLoadingGen(true);
     try {
-      // Build generator endpoint. Only pass po_number when PO-based mode selected
+      // Build generator endpoint.
       const params = new URLSearchParams();
-      if (mode === "po" && poNumber) params.append("po_number", poNumber);
+      params.append("mode", mode); // tell backend whether we want PO or non-PO behavior
       if (splitLineItem) params.append("split_first_line", "true");
 
       const url = `${BACKEND}/api/v1/dev/generate-invoice?${params.toString()}`;
       const resp = await fetch(url, { method: "POST" });
-      const data = await resp.json();
-      const generated = data?.generated_invoice || data || {};
 
-      // deep clone to mutate safely
+      // read response body even on error to show message
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setStatusMsg(`Generator error: ${JSON.stringify(data)}`);
+        setLoadingGen(false);
+        return;
+      }
+
+      const generated = data?.generated_invoice || data || {};
       const mutated = JSON.parse(JSON.stringify(generated));
 
       // a) remove mandatory field when requested
@@ -76,7 +81,7 @@ export default function SubmitInvoice() {
       }
 
       setJsonText(JSON.stringify(mutated, null, 2));
-      setStatusMsg(`Generated invoice (${mode === "po" ? `PO ${poNumber}` : "Non-PO"})`);
+      setStatusMsg(`Generated invoice (${mode === "po" ? "PO-based (random/selected)" : "Non-PO"})`);
     } catch (err) {
       console.error(err);
       setStatusMsg(`Error generating invoice: ${err?.message || JSON.stringify(err)}`);
@@ -96,7 +101,7 @@ export default function SubmitInvoice() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(json),
       });
-      const resp = await r.json();
+      const resp = await r.json().catch(() => ({}));
       if (!r.ok) {
         setStatusMsg(`Submit error: ${JSON.stringify(resp)}`);
       } else {
@@ -117,22 +122,15 @@ export default function SubmitInvoice() {
       <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 12 }}>
         <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input type="radio" name="mode" value="po" checked={mode === "po"} onChange={() => setMode("po")} />
-          PO-based
+          PO-based (backend chooses random PO if none specified)
         </label>
+
         <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input type="radio" name="mode" value="nonpo" checked={mode === "nonpo"} onChange={() => setMode("nonpo")} />
           Non-PO based
         </label>
 
-        {/* show PO number input only when PO-based mode is selected */}
-        {mode === "po" && (
-          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            PO Number:
-            <input value={poNumber} onChange={(e) => setPoNumber(e.target.value)} style={{ marginLeft: 8 }} />
-          </label>
-        )}
-
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <label style={{ display: "flex", gap: 8, alignItems: "center", marginLeft: 12 }}>
           <input type="checkbox" checked={splitLineItem} onChange={(e) => setSplitLineItem(e.target.checked)} />
           Split line item
         </label>

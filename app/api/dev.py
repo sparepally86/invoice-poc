@@ -82,47 +82,66 @@ def build_invoice_from_po(
     return invoice
 
 @router.post("/dev/generate-invoice", response_class=JSONResponse)
-async def generate_invoice(po_number: str | None = Query(None), split_first_line: bool | None = Query(False)):
+async def generate_invoice(
+    mode: str = Query("po"),                    # "po" or "nonpo"
+    po_number: str | None = Query(None),        # optional; backend may pick random if mode=po
+    split_first_line: bool | None = Query(False)
+):
     """
-    Dev helper: generate a synthetic invoice.
-    - If po_number is provided, build invoice from that PO (existing behavior).
-    - If po_number is not provided, create a non-PO invoice using an existing vendor (random) or a fallback.
+    Dev helper:
+    - mode=po -> PO-based invoice. If po_number provided, use it. Otherwise pick a random PO.
+    - mode=nonpo -> generate a synthetic non-PO invoice.
     """
-
     db = get_db()
 
     try:
-        if po_number:
-            # existing PO-based flow: try to fetch the PO and its vendor
-            po_doc = await db.pos.find_one({"po_number": po_number})
-            if not po_doc:
-                # Return a clear error (but 422 was previous behaviour) — choose 404 or 422 as you prefer
-                raise HTTPException(status_code=422, detail=f"PO not found: {po_number}")
+        if mode == "po":
+            # If a po_number was provided, try to use it; otherwise pick random PO
+            selected_po = None
+            if po_number:
+                selected_po = await db.pos.find_one({"po_number": po_number})
+                if not selected_po:
+                    raise HTTPException(status_code=422, detail=f"PO not found: {po_number}")
+            else:
+                # pick a random PO document
+                po_doc = await db.pos.find_one({})
+                if not po_doc:
+                    raise HTTPException(status_code=422, detail="No POs found in PO master — create some POs first")
+                # Use aggregation to randomly sample if many exist:
+                # Note: for simplicity use a random skip approach for small datasets
+                # Count total and skip random
+                count = await db.pos.count_documents({})
+                if count <= 1:
+                    selected_po = po_doc
+                else:
+                    skip = random.randint(0, max(0, count - 1))
+                    cursor = db.pos.find({}, limit=1, skip=skip)
+                    docs = await cursor.to_list(length=1)
+                    selected_po = docs[0] if docs else po_doc
 
-            # get vendor if present on PO
-            vendor_id = po_doc.get("vendor_id") or po_doc.get("vendor_number")
-            vendor = None
-            if vendor_id:
-                vendor = await db.vendors.find_one({"vendor_id": vendor_id}) or await db.vendors.find_one({"_id": vendor_id})
-
-            # build invoice header and items based on PO
+            # Build invoice from selected_po
+            po_doc = selected_po
+            po_lines = po_doc.get("lines", []) or po_doc.get("items", []) or []
             items = []
-            po_lines = po_doc.get("lines", [])
             for ln in po_lines:
+                qty = ln.get("quantity") or ln.get("qty") or 1
+                amt = ln.get("amount")
+                if amt is None:
+                    # try unit_price * qty
+                    amt = (ln.get("unit_price") or ln.get("price") or 0) * qty
                 items.append({
-                    "item_text": ln.get("item_text") or ln.get("description") or ln.get("name"),
-                    "quantity": ln.get("quantity") or ln.get("qty") or 1,
-                    "amount": ln.get("amount") or (ln.get("unit_price") or 0) * (ln.get("quantity") or 1),
+                    "item_text": ln.get("item_text") or ln.get("description") or ln.get("name") or "",
+                    "quantity": qty,
+                    "amount": amt
                 })
 
             total_amount = sum((it.get("amount") or 0) for it in items)
-
             header = {
-                "po_number": po_number,
+                "po_number": po_doc.get("po_number"),
                 "invoice_ref": f"GEN-{random.randint(10000,99999)}",
                 "invoice_date": datetime.datetime.utcnow().date().isoformat(),
-                "vendor_number": vendor.get("vendor_id") if vendor else (po_doc.get("vendor_id") or "UNKNOWN"),
-                "vendor_name": vendor.get("name_raw") if vendor else po_doc.get("vendor_name", "Unknown Vendor"),
+                "vendor_number": po_doc.get("vendor_id") or po_doc.get("vendor_number") or po_doc.get("vendor"),
+                "vendor_name": po_doc.get("vendor_name") or po_doc.get("vendor") or "Unknown Vendor",
                 "currency": po_doc.get("currency", "INR"),
                 "amount": total_amount
             }
@@ -130,14 +149,12 @@ async def generate_invoice(po_number: str | None = Query(None), split_first_line
             generated = {"header": header, "items": items}
             return {"generated_invoice": generated}
 
-        else:
-            # Non-PO flow: pick a random vendor or fallback to first vendor
-            vendor = await db.vendors.find_one({})
-            if not vendor:
-                # If no vendors exist in DB, return a useful 422 with message
+        elif mode == "nonpo":
+            # Generate synthetic non-PO invoice. Pick a random vendor to attribute to.
+            vendor_doc = await db.vendors.find_one({})
+            if not vendor_doc:
                 raise HTTPException(status_code=422, detail="No vendors found in Vendor master — create some vendors first")
 
-            # Create a simple invoice with 1-2 lines
             num_lines = 2 if split_first_line else 1
             items = []
             for i in range(num_lines):
@@ -153,17 +170,20 @@ async def generate_invoice(po_number: str | None = Query(None), split_first_line
             header = {
                 "invoice_ref": f"GEN-NP-{random.randint(1000,9999)}",
                 "invoice_date": datetime.datetime.utcnow().date().isoformat(),
-                "vendor_number": vendor.get("vendor_id") or vendor.get("_id"),
-                "vendor_name": vendor.get("name_raw") or vendor.get("name") or "Vendor",
-                "currency": vendor.get("currency", "INR"),
+                "vendor_number": vendor_doc.get("vendor_id") or vendor_doc.get("_id"),
+                "vendor_name": vendor_doc.get("name_raw") or vendor_doc.get("name") or "Vendor",
+                "currency": vendor_doc.get("currency", "INR"),
                 "amount": total_amount,
             }
 
             generated = {"header": header, "items": items}
             return {"generated_invoice": generated}
 
+        else:
+            raise HTTPException(status_code=422, detail=f"Unknown mode: {mode}")
+
     except HTTPException:
+        # propagate known HTTP errors
         raise
     except Exception as e:
-        # Unexpected error -> helpful 500
         raise HTTPException(status_code=500, detail=f"Generator error: {str(e)}")
