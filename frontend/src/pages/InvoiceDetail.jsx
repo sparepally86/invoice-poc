@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import api from "../lib/api";
+import ExplanationPanel from "../components/ExplanationPanel";
 
 /**
  * Invoice detail page
@@ -168,6 +169,11 @@ export default function InvoiceDetail() {
         </div>
 
         <div>
+          {/* Explanation panel (AI) */}
+          {invoice && invoice._id && (
+            <ExplanationPanel invoiceId={invoice._id} />
+          )}
+
           <PrettyBox title="Workflow / Journey (last steps)">
             {Array.isArray(invoice._workflow?.steps) && invoice._workflow.steps.length > 0 ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
