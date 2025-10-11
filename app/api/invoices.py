@@ -400,6 +400,16 @@ async def approve_invoice(invoice_id: str, payload: Dict[str, Any] = Body(None))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"approve_failed: {e}")
 
+    # after updating invoice status, mark any pending/queued HITL tasks for this invoice as resolved
+    try:
+        db.tasks.update_many(
+            {"invoice_id": invoice_id, "status": {"$in": ["pending", "queued"]}},
+            {"$set": {"status": "done", "resolved_at": _now_iso()}}
+        )
+    except Exception:
+        # non-fatal: don't block approve flow if tasks collection op fails
+        pass
+
     updated = db.invoices.find_one({"_id": invoice_id})
     if isinstance(updated.get("_id"), ObjectId):
         updated["_id"] = str(updated["_id"])
@@ -446,6 +456,16 @@ async def reject_invoice(invoice_id: str, payload: Dict[str, Any] = Body(None)):
         _append_workflow_step_and_update_status(db, invoice_id, step, new_status="REJECTED")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"reject_failed: {e}")
+
+    # after updating invoice status, mark any pending/queued HITL tasks for this invoice as resolved
+    try:
+        db.tasks.update_many(
+            {"invoice_id": invoice_id, "status": {"$in": ["pending", "queued"]}},
+            {"$set": {"status": "done", "resolved_at": _now_iso()}}
+        )
+    except Exception:
+        # non-fatal: don't block reject flow if tasks collection op fails
+        pass
 
     updated = db.invoices.find_one({"_id": invoice_id})
     if isinstance(updated.get("_id"), ObjectId):

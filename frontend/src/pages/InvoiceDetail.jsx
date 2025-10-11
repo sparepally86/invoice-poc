@@ -101,14 +101,14 @@ export default function InvoiceDetail() {
           <button onClick={() => navigate("/invoices")} style={{ padding: "8px 12px" }}>Back</button>
           <button
             onClick={doApprove}
-            disabled={actioning}
+            disabled={actioning || (invoice && (invoice.status === "READY_FOR_POSTING" || invoice.status === "REJECTED"))}
             style={{ padding: "8px 12px", background: "#10b981", color: "white", border: "none", borderRadius: 6 }}
           >
             {actioning ? "Working..." : "Approve"}
           </button>
           <button
             onClick={doReject}
-            disabled={actioning}
+            disabled={actioning || (invoice && (invoice.status === "READY_FOR_POSTING" || invoice.status === "REJECTED"))}
             style={{ padding: "8px 12px", background: "#ef4444", color: "white", border: "none", borderRadius: 6 }}
           >
             {actioning ? "Working..." : "Reject"}
