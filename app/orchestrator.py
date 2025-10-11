@@ -111,20 +111,6 @@ async def process_task(task):
         # persist validation output into invoice document under _workflow.steps
         await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": validation_out}})
 
-        # --- EXPLAINER: if validation not completed, call ExplainAgent & persist explain step ---
-        try:
-            agent_name = validation_out.get("agent", "")
-            agent_status = validation_out.get("status", "")
-            if agent_name == "ValidationAgent" and agent_status not in ("completed", "ok", "success"):
-                try:
-                    explain_resp = await asyncio.to_thread(run_explain, db, invoice, validation_out)
-                    await asyncio.to_thread(_append_explain_step_to_invoice, db, invoice_id, explain_resp)
-                except Exception:
-                    import logging
-                    logging.exception("Failed to run/persist ExplainAgent for invoice %s (validation path)", invoice_id)
-        except Exception:
-            pass
-
         # compute status and set via helper
         new_status = "VALIDATED" if validation_out.get("status") == "completed" else "EXCEPTION"
         await asyncio.to_thread(update_invoice_status, db, invoice_id, new_status, "Orchestrator", note="Validation result applied")
@@ -177,20 +163,6 @@ async def process_task(task):
 
             # persist PO matching result into workflow
             await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": po_out}})
-
-            # --- EXPLAINER: if PO matching not matched, call ExplainAgent & persist explain step ---
-            try:
-                agent_name = po_out.get("agent", "")
-                agent_status = po_out.get("status", "")
-                if agent_name == "POMatchingAgent" and agent_status not in ("matched", "ok", "completed"):
-                    try:
-                        explain_resp = await asyncio.to_thread(run_explain, db, invoice, po_out)
-                        await asyncio.to_thread(_append_explain_step_to_invoice, db, invoice_id, explain_resp)
-                    except Exception:
-                        import logging
-                        logging.exception("Failed to run/persist ExplainAgent for invoice %s (po matching path)", invoice_id)
-            except Exception:
-                pass
 
             # set status via helper
             matched_status = "MATCHED" if po_out.get("status") == "matched" else "EXCEPTION"
