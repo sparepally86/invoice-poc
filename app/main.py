@@ -2,6 +2,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.api import dev_vector
 
 # Import your router module (ensure this path matches your repo)
 from app.api import invoices, masterdata, dev, tasks
@@ -24,6 +25,7 @@ app.include_router(invoices.router, prefix="/api/v1")
 app.include_router(masterdata.router, prefix="/api/v1")
 app.include_router(dev.router, prefix="/api/v1")
 app.include_router(tasks.router, prefix="/api/v1")
+app.include_router(dev_vector.router, prefix="/api/v1")
 
 
 # add to app/main.py near the bottom, after router includes
