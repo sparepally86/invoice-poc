@@ -14,7 +14,12 @@ export default function ExplanationPanel({ invoiceId }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/v1/invoices/${encodeURIComponent(invoiceId)}/explain`);
+  // build API base from env (REACT_APP_API_BASE) or empty string
+  const API_BASE = (process.env.REACT_APP_API_BASE || "").replace(/\/+$/, ""); // strip trailing slash
+
+  // fetch explain (use absolute base if provided, otherwise relative)
+  const url = (API_BASE ? `${API_BASE}` : "") + `/api/v1/invoices/${encodeURIComponent(invoiceId)}/explain`;
+  const res = await fetch(url);
       if (!res.ok) {
         const txt = await res.text();
         setError(`HTTP ${res.status}: ${txt}`);
