@@ -78,6 +78,9 @@ def ensure_minimal_structure(payload: Dict[str, Any]) -> Dict[str, Any]:
         else:
             payload.setdefault("lines", [])
 
+    # Mirror 'lines' back to 'items' so older agents reading 'items' continue to work
+    payload['items'] = list(payload.get('lines', []))
+
     payload.setdefault("validation", {})
     payload.setdefault("ml_metadata", {})
 

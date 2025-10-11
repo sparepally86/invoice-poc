@@ -103,7 +103,7 @@ def run_po_matching(db, invoice_doc: Dict[str, Any]) -> Dict[str, Any]:
 
             matched_lines.append({
                 "po_line_index": idx+1,
-                "invoice_item_idx": idx,
+                "item_index": idx,
                 "po_amount": po_amt,
                 "inv_amount": inv_amt,
                 "price_diff_pct": price_diff_pct,
@@ -114,7 +114,7 @@ def run_po_matching(db, invoice_doc: Dict[str, Any]) -> Dict[str, Any]:
             # no corresponding PO line
             matched_lines.append({
                 "po_line_index": None,
-                "invoice_item_idx": idx,
+                "item_index": idx,
                 "po_amount": None,
                 "inv_amount": inv_amt,
                 "price_diff_pct": None,
