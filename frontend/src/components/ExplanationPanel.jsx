@@ -1,6 +1,9 @@
 // frontend/src/components/ExplanationPanel.jsx
 import React, { useEffect, useState } from "react";
 
+// Build API base from Vite env (VITE_API_BASE) or empty string
+const API_BASE = (import.meta.env.VITE_API_BASE || "").replace(/\/+$/, ""); // strip trailing slash
+
 export default function ExplanationPanel({ invoiceId }) {
   const [loading, setLoading] = useState(false);
   const [explain, setExplain] = useState(null);
@@ -14,12 +17,9 @@ export default function ExplanationPanel({ invoiceId }) {
     setLoading(true);
     setError(null);
     try {
-  // build API base from env (REACT_APP_API_BASE) or empty string
-  const API_BASE = (process.env.REACT_APP_API_BASE || "").replace(/\/+$/, ""); // strip trailing slash
-
-  // fetch explain (use absolute base if provided, otherwise relative)
-  const url = (API_BASE ? `${API_BASE}` : "") + `/api/v1/invoices/${encodeURIComponent(invoiceId)}/explain`;
-  const res = await fetch(url);
+      // fetch explain (use absolute base if provided, otherwise relative)
+      const url = (API_BASE ? `${API_BASE}` : "") + `/api/v1/invoices/${encodeURIComponent(invoiceId)}/explain`;
+      const res = await fetch(url);
       if (!res.ok) {
         const txt = await res.text();
         setError(`HTTP ${res.status}: ${txt}`);
@@ -43,7 +43,8 @@ export default function ExplanationPanel({ invoiceId }) {
   const fetchFeedback = async () => {
     if (!invoiceId) return;
     try {
-      const res = await fetch(`/api/v1/invoices/${encodeURIComponent(invoiceId)}/feedback`);
+      const url = (API_BASE ? `${API_BASE}` : "") + `/api/v1/invoices/${encodeURIComponent(invoiceId)}/feedback`;
+      const res = await fetch(url);
       if (!res.ok) return;
       const data = await res.json();
       if (data && data.ok) setFeedbackList(data.feedback || []);
@@ -69,7 +70,8 @@ export default function ExplanationPanel({ invoiceId }) {
         notes,
         user: "ui:user" // TODO: replace with real user id from auth
       };
-      const res = await fetch(`/api/v1/feedback`, {
+      const url = (API_BASE ? `${API_BASE}` : "") + `/api/v1/feedback`;
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
