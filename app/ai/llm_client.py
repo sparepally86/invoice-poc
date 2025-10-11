@@ -5,6 +5,8 @@ import json
 import logging
 from typing import Optional, Dict, Any
 
+from app.config import LLM_PROVIDER, OPENAI_API_KEY, OPENAI_API_BASE, LOCAL_LLM_URL, LOCAL_LLM_MODEL
+
 logger = logging.getLogger(__name__)
 
 class LLMClient:
@@ -78,10 +80,16 @@ class LLMClient:
         else:
             raise NotImplementedError(f"LLM provider '{self.provider}' not implemented")
 
-# Convenience singleton
-_llm_client = None
-def get_llm_client() -> LLMClient:
-    global _llm_client
-    if _llm_client is None:
-        _llm_client = LLMClient()
-    return _llm_client
+# Replace the old convenience singleton/selector with a config-driven selector
+def get_llm_client():
+    provider = (LLM_PROVIDER or "noop").lower()
+    if provider == "openai":
+        # small wrapper that returns an object with .model and .call_llm(prompt,...)
+        from app.ai.openai_client import OpenAIClient
+        return OpenAIClient(api_key=OPENAI_API_KEY, base=OPENAI_API_BASE)
+    if provider == "local":
+        from app.ai.local_llm_client import LocalLLMClient
+        return LocalLLMClient(url=LOCAL_LLM_URL, model=LOCAL_LLM_MODEL)
+    # fallback noop client (already in your repo)
+    from app.ai.noop_client import NoopClient
+    return NoopClient()

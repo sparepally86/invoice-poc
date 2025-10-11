@@ -14,6 +14,7 @@ from typing import Optional, Dict, Any, List
 import threading
 import time
 import re
+from app.config import VECTOR_PROVIDER, PINECONE_API_KEY, PINECONE_ENVIRONMENT, PINECONE_INDEX_NAME, WEAVIATE_URL, WEAVIATE_API_KEY
 
 _lock = threading.Lock()
 
@@ -87,11 +88,19 @@ class InMemoryVectorClient:
 # Exported client factory
 _default_client = None
 
-def get_vector_client(provider: Optional[str] = None):
+def get_vector_client():
     """
-    For POC we ignore provider and return in-memory client.
-    A real implementation would inspect provider and create a remote client.
+    Create a vector client based on configuration.
+    Supported providers: pinecone, weaviate. Defaults to in-memory client for POC/dev.
     """
+    prov = (VECTOR_PROVIDER or "inmemory").lower()
+    if prov == "pinecone":
+        from app.storage.pinecone_client import PineconeClient
+        return PineconeClient(api_key=PINECONE_API_KEY, env=PINECONE_ENVIRONMENT, index_name=PINECONE_INDEX_NAME)
+    if prov == "weaviate":
+        from app.storage.weaviate_client import WeaviateClient
+        return WeaviateClient(url=WEAVIATE_URL, api_key=WEAVIATE_API_KEY)
+    # default in-memory client (singleton)
     global _default_client
     if _default_client is None:
         _default_client = InMemoryVectorClient()
