@@ -1,0 +1,60 @@
+Invoice POC — Phase A (Repository Summary
+
+Context
+- This repository contains the Phase A implementation of an Agentic AP Automation Proof-of-Concept (Invoice POC).
+- Phase A has been completed per your PhaseA_Summary and supporting schema docs: deterministic rule-based agents, orchestrator, minimal UI for HITL, and MongoDB persistence.
+
+High-level architecture (as implemented)
+- Orchestrator: central router and status manager responsible for routing AgentRequest -> AgentResponse, coordinating workflow steps, and creating HITL tasks when required.
+- Agents:
+  - ValidationAgent: deterministic checks for required fields, correct data types, threshold checks, returns {valid:true|false, issues:[...]} and routes to POMatchingAgent or HITL.
+  - POMatchingAgent: deterministic 2-way PO matching with configurable tolerance; returns {po_found, match_score, tolerance_exceeded}.
+  - CodingAgent: rule-based GL and cost-center assignment; returns coding payload for invoice lines.
+  - RiskApprovalAgent: evaluates risk and determines approval requirement (auto-post vs requires human approval).
+- HITL / Tasks: orchestrator creates tasks for failed validation, PO mismatches, missing vendor mapping, or risk approvals. Tasks are exposed via APIs and handled in the UI.
+- Data stores: MongoDB collections for vendors, pos (PO master), invoices (with workflow steps), and tasks.
+- Web UI: pages/dashboards for invoice submission, journey view, tasks (HITL), invoice detail with approve/reject actions, and a dev generator for sample invoices.
+- APIs: endpoints implemented include (but may not be limited to):
+  - POST /api/v1/incoming — submit invoice (ingest & orchestrate)
+  - GET /api/v1/invoices/{id} — fetch invoice
+  - GET /api/v1/invoices/{id}/events — SSE stream for live journey
+  - POST /api/v1/invoices/{id}/approve — approve invoice → READY_FOR_POSTING
+  - GET /api/v1/tasks — fetch HITL tasks
+  - POST /api/v1/tasks/{id}/action — approve/reject task
+  - CRUD endpoints for /vendors and /pos
+  - POST /api/v1/dev/generate-invoice — dev utility for generating invoices
+
+Agent IO & Contracts
+- All agents use a common envelope for AgentRequest and AgentResponse to ensure consistent orchestration and routing.
+- Examples (from repository docs):
+  - AgentRequest: { invoice_id, payload, context: {status, history, received_at} }
+  - AgentResponse: { agent, invoice_id, status, result, next_agent, score, errors, timestamp }
+- Agents post back results to an invoice-level _workflow.steps[] array for auditability and traceability.
+
+Phase A Deliverables (already implemented)
+- Orchestrator skeleton (queue + worker pattern) and central routing ✅
+- ValidationAgent and POMatchingAgent (deterministic) ✅
+- CodingAgent and RiskApprovalAgent (rules-based) ✅
+- HITL task creation and basic task flows/UI ✅
+- MongoDB persistence with vendors, pos, invoices, tasks ✅
+- SSE-based live journey/event stream for invoice status updates ✅
+- Basic dev utilities (invoice generator endpoint) and CRUD for masters ✅
+
+Notes / Observations (items to check in repo)
+- CI: confirm whether there is an existing GitHub Actions workflow for tests/linting; if missing, add a minimal CI to run unit tests.
+- Tests: look for unit tests for agents and orchestrator; if absent, add targeted tests (ValidationAgent, POMatchingAgent).
+- Packaging: confirm repo structure (src/ vs notebooks) and dependency management (requirements.txt vs poetry).
+- Security: ensure no secrets are checked in and that DB credentials are environment-driven.
+
+Recommended next steps (Phase B bootstrap)
+- Add a Vector DB and ingestion pipeline for historical docs (RAG).
+- Implement a RAG-powered ExplainAgent to fetch evidence for human reviewers.
+- Integrate LLM-assisted vendor disambiguation flows (LangChain-style).
+- Add a metrics/observability baseline: basic metrics for routing failures, agent latencies, task volumes.
+- Introduce a CI gate for merges (tests pass) before enabling auto-posting.
+
+Purpose of this PR
+- Add a concise repo-level summary reflecting the current Phase A implementation and serve as a single-source high-level description for reviewers and contributors as we transition to Phase B.
+
+Prepared by: Copilot (as requested)
+Date: 2025-10-11
