@@ -7,6 +7,7 @@ from app.api import dev_explain
 
 # Import your router module (ensure this path matches your repo)
 from app.api import invoices, masterdata, dev, tasks
+from app.api import explain, feedback
 
 app = FastAPI(title="Invoice POC Agentic")
 
@@ -28,6 +29,8 @@ app.include_router(dev.router, prefix="/api/v1")
 app.include_router(tasks.router, prefix="/api/v1")
 app.include_router(dev_vector.router, prefix="/api/v1")
 app.include_router(dev_explain.router, prefix="/api/v1")
+app.include_router(explain.router, prefix="/api/v1")
+app.include_router(feedback.router, prefix="/api/v1")
 
 # add to app/main.py near the bottom, after router includes
 @app.on_event("startup")

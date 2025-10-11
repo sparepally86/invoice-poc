@@ -14,7 +14,7 @@ def _to_thread(fn, *a, **kw):
     return loop.run_in_executor(None, lambda: fn(*a, **kw))
 
 
-@router.post("/api/v1/feedback", response_class=JSONResponse)
+@router.post("/feedback", response_class=JSONResponse)
 async def post_feedback(payload: Dict[str, Any] = Body(...)):
     """
     Store reviewer feedback.
@@ -53,7 +53,7 @@ async def post_feedback(payload: Dict[str, Any] = Body(...)):
         raise HTTPException(status_code=500, detail=f"db_insert_failed: {str(e)}")
 
 
-@router.get("/api/v1/invoices/{invoice_id}/feedback", response_class=JSONResponse)
+@router.get("/invoices/{invoice_id}/feedback", response_class=JSONResponse)
 async def get_feedback(invoice_id: str = Path(...)):
     """
     Return recent feedback entries for the invoice (most recent first).

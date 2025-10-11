@@ -7,7 +7,7 @@ from app.agents.explain import run_explain
 
 router = APIRouter()
 
-@router.post("/api/v1/invoices/{invoice_id}/explain", response_class=JSONResponse)
+@router.post("/invoices/{invoice_id}/explain", response_class=JSONResponse)
 async def explain_invoice(
     invoice_id: str = Path(..., description="Invoice _id to explain"),
     payload: Optional[Dict[str, Any]] = Body(None),
@@ -39,7 +39,7 @@ async def explain_invoice(
         raise HTTPException(status_code=500, detail=f"explain_failed: {str(e)}")
 
 
-@router.get("/api/v1/invoices/{invoice_id}/explain", response_class=JSONResponse)
+@router.get("/invoices/{invoice_id}/explain", response_class=JSONResponse)
 async def get_latest_explain(invoice_id: str = Path(..., description="Invoice _id to fetch explanation for")):
     """
     Return the most recent ExplainAgent step for the specified invoice.
