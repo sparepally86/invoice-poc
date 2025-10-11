@@ -2,6 +2,7 @@
 import os
 import datetime
 from typing import Dict, Any, List
+from app.agents._common import ensure_agent_response
 
 # tolerance in percent (e.g. 0.5 = 0.5%)
 AMOUNT_TOLERANCE_PCT = float(os.environ.get("VALIDATION_AMOUNT_TOLERANCE_PCT", "0.5"))
@@ -88,4 +89,4 @@ def run_validation(db, invoice_doc: Dict[str, Any]) -> Dict[str, Any]:
         "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
     }
 
-    return agent_output
+    return ensure_agent_response("ValidationAgent", agent_output)

@@ -2,6 +2,7 @@
 import os
 import datetime
 from typing import Dict, Any, List
+from app.agents._common import ensure_agent_response
 
 PRICE_TOL_PCT = float(os.environ.get("PO_PRICE_TOL_PCT", "5.0"))
 QTY_TOL_PCT = float(os.environ.get("PO_QTY_TOL_PCT", "0.0"))
@@ -45,7 +46,7 @@ def run_po_matching(db, invoice_doc: Dict[str, Any]) -> Dict[str, Any]:
             "errors": [],
             "timestamp": now
         }
-        return agent_out
+        return ensure_agent_response("POMatchingAgent", agent_out)
 
     # fetch PO from pos collection (we stored pos with _id = po_number earlier)
     po = db.get_collection("pos").find_one({"_id": po_number})
@@ -65,7 +66,7 @@ def run_po_matching(db, invoice_doc: Dict[str, Any]) -> Dict[str, Any]:
             "errors": [],
             "timestamp": now
         }
-        return agent_out
+        return ensure_agent_response("POMatchingAgent", agent_out)
 
     result["po_found"] = True
     result["po_number"] = po_number
@@ -150,4 +151,4 @@ def run_po_matching(db, invoice_doc: Dict[str, Any]) -> Dict[str, Any]:
         "errors": [],
         "timestamp": now
     }
-    return agent_out
+    return ensure_agent_response("POMatchingAgent", agent_out)

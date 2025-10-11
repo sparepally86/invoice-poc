@@ -16,6 +16,7 @@ import os
 from typing import Dict, Any
 from datetime import datetime
 import math
+from app.agents._common import ensure_agent_response
 
 AGENT_NAME = "RiskApprovalAgent"
 

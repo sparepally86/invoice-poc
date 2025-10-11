@@ -14,6 +14,7 @@ Behavior:
 
 from typing import Dict, Any, List
 from datetime import datetime
+from app.agents._common import ensure_agent_response
 
 AGENT_NAME = "CodingAgent"
 
@@ -51,7 +52,7 @@ def _lookup_vendor_rules(db, vendor_id: str) -> Dict[str, Any]:
     out = {}
     if gl:
         out["gl_account"] = gl
-    return out
+    return ensure_agent_response("CodingAgent", out)
 
 def _lookup_company_rules(db, companycode: str) -> Dict[str, Any]:
     cc = FALLBACK_COMPANY_COSTCENTER.get(companycode)
@@ -192,4 +193,4 @@ def run_coding(db, invoice: Dict[str, Any]) -> Dict[str, Any]:
         agent_response["errors"].append(str(e))
         agent_response["score"] = 0.0
 
-    return agent_response
+    return ensure_agent_response("CodingAgent", agent_response)
