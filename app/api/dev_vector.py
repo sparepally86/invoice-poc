@@ -6,7 +6,7 @@ from app.storage.vector_client import get_vector_client
 
 router = APIRouter()
 
-@router.post("/api/v1/dev/vector/upsert", response_class=JSONResponse)
+@router.post("/dev/vector/upsert", response_class=JSONResponse)
 async def dev_vector_upsert(payload: Dict[str, Any] = Body(...)):
     """
     Dev endpoint to upsert a document into the in-memory vector client.
@@ -26,7 +26,7 @@ async def dev_vector_upsert(payload: Dict[str, Any] = Body(...)):
     res = vc.upsert(doc_id, text, metadata=metadata)
     return JSONResponse(res)
 
-@router.get("/api/v1/dev/vector/search", response_class=JSONResponse)
+@router.get("/dev/vector/search", response_class=JSONResponse)
 async def dev_vector_search(q: str = Query(...), k: int = Query(5), loc: Optional[str] = Query(None)):
     """
     Dev endpoint to search the in-memory vector client.

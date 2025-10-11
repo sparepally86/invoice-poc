@@ -7,7 +7,7 @@ from app.storage.mongo_client import get_db
 
 router = APIRouter()
 
-@router.post("/api/v1/dev/explain", response_class=JSONResponse)
+@router.post("/dev/explain", response_class=JSONResponse)
 async def dev_explain(payload: Dict[str, Any] = Body(...)):
     """
     Dev endpoint to trigger ExplainAgent.
