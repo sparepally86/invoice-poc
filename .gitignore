@@ -1,0 +1,44 @@
+# ----- OS / Editor -----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ----- Python -----
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+pip-wheel-metadata/
+.python-version
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# ----- Node / Frontend (fallback; frontend/.gitignore already handles most) -----
+node_modules/
+dist/
+build/
+*.log
+
+# Vite/Tooling
+*.tsbuildinfo
+
+# Vercel / Deploy
+.vercel/
+
+# ----- Environment files -----
+.env
+.env.*
+!.env.template
+
+# Misc
+logs/
+tmp/
