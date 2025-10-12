@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import dev_vector
 from app.api import dev_explain
+from app.api import dev_reindex_feedback, dev_retrieve
 
 # Import your router module (ensure this path matches your repo)
 from app.api import invoices, masterdata, dev, tasks
@@ -31,6 +32,10 @@ app.include_router(dev_vector.router, prefix="/api/v1")
 app.include_router(dev_explain.router, prefix="/api/v1")
 app.include_router(explain.router, prefix="/api/v1")
 app.include_router(feedback.router, prefix="/api/v1")
+
+# Routers with absolute paths defined internally (already include /api/v1 in route decorators)
+app.include_router(dev_reindex_feedback.router)
+app.include_router(dev_retrieve.router)
 
 # add to app/main.py near the bottom, after router includes
 @app.on_event("startup")
