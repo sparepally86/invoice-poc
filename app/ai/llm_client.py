@@ -90,6 +90,5 @@ def get_llm_client():
     if provider == "local":
         from app.ai.local_llm_client import LocalLLMClient
         return LocalLLMClient(url=LOCAL_LLM_URL, model=LOCAL_LLM_MODEL)
-    # fallback noop client (already in your repo)
-    from app.ai.noop_client import NoopClient
-    return NoopClient()
+    # fallback to built-in generic client in noop mode (no external calls)
+    return LLMClient(provider="noop")
