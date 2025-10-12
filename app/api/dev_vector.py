@@ -43,3 +43,40 @@ async def dev_vector_search(q: str = Query(...), k: int = Query(5), loc: Optiona
         filter_md = {"loc": loc}
     results = vc.search(q, k=k, filter=filter_md)
     return JSONResponse({"ok": True, "query": q, "k": k, "results": results})
+
+# --- Compatibility aliases (for docs/tools expecting /dev/retrieve/*) ---
+@router.post("/dev/retrieve/index", response_class=JSONResponse)
+async def dev_retrieve_index(payload: Dict[str, Any] = Body(...)):
+  """
+  Compatibility alias for indexing a doc. Mirrors /dev/vector/upsert but returns
+  an "indexed_chunks" field to match older examples.
+
+  Body JSON:
+  {
+    "id": "doc-1",
+    "text": "some text",
+    "metadata": { ... }
+  }
+  """
+  vc = get_vector_client()
+  doc_id = payload.get("id") or payload.get("doc_id")
+  text = payload.get("text") or payload.get("content") or ""
+  metadata = payload.get("metadata") or {}
+  if not doc_id:
+    return JSONResponse({"ok": False, "error": "missing id"}, status_code=400)
+  res = vc.upsert(doc_id, text, metadata=metadata)
+  # In-memory client doesn't chunk; report 1 chunk if there's any text
+  chunk_count = 1 if (text or "").strip() else 0
+  return JSONResponse({"ok": True, "id": res.get("id", doc_id), "indexed_chunks": chunk_count})
+
+@router.get("/dev/retrieve/search", response_class=JSONResponse)
+async def dev_retrieve_search(q: str = Query(...), k: int = Query(5), loc: Optional[str] = Query(None)):
+  """
+  Compatibility alias for searching, mirroring /dev/vector/search.
+  """
+  vc = get_vector_client()
+  filter_md = None
+  if loc:
+    filter_md = {"loc": loc}
+  results = vc.search(q, k=k, filter=filter_md)
+  return JSONResponse({"ok": True, "query": q, "k": k, "results": results})
