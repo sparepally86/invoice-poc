@@ -9,3 +9,4 @@ pymongo
 pytest
 dnspython
 httpx
+python-dotenv

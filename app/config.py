@@ -1,6 +1,18 @@
 # app/config.py
 import os
 from typing import Optional
+"""
+Optional .env support: if python-dotenv is installed and a .env file exists,
+load it so local development can manage env vars via a file instead of shell.
+This is a no-op if python-dotenv is not installed.
+"""
+try:
+    from dotenv import load_dotenv  # type: ignore
+    # Allow overriding path via ENV_FILE; default to ".env" in project root
+    _env_file = os.environ.get("ENV_FILE", ".env")
+    load_dotenv(dotenv_path=_env_file, override=False)
+except Exception:
+    pass
 
 def _getenv(name: str, default: Optional[str] = None) -> Optional[str]:
     v = os.environ.get(name)

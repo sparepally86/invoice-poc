@@ -17,6 +17,13 @@ import openai
 import pinecone
 import json
 
+# Load .env if available (optional)
+try:
+    from dotenv import load_dotenv  # type: ignore
+    load_dotenv(dotenv_path=os.environ.get("ENV_FILE", ".env"), override=False)
+except Exception:
+    pass
+
 # Set these environment vars or replace below
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") or "<REPLACE_WITH_OPENAI_KEY>"
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY") or "<REPLACE_WITH_PINECONE_KEY>"
