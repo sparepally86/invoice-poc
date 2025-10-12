@@ -8,35 +8,48 @@ from app.agents.explain import run_explain
 router = APIRouter()
 
 @router.post("/invoices/{invoice_id}/explain", response_class=JSONResponse)
-async def explain_invoice(
-    invoice_id: str = Path(..., description="Invoice _id to explain"),
-    payload: Optional[Dict[str, Any]] = Body(None),
-):
-    """
-    Trigger ExplainAgent for the given invoice.
-    Body (optional):
-      { "triggering_step": {...} }  # an agent step that triggered this explain call
-    If triggering_step is omitted, ExplainAgent will be called with an empty triggering step.
-    The ExplainAgent response is persisted into invoice._workflow.steps[] and returned.
-    """
-    db = get_db()
-    invoice = await asyncio_to_thread(db.invoices.find_one, {"_id": invoice_id})
-    if not invoice:
-        raise HTTPException(status_code=404, detail="invoice_not_found")
+async def post_explain(invoice_id: str = Path(...), payload: dict = Body({})):
+    """Debug-friendly POST that logs full traceback on failures and returns it in response."""
+    import traceback
+    from datetime import datetime
 
-    triggering_step = (payload or {}).get("triggering_step", {}) if payload else {}
+    db = get_db()
     try:
-        # run_explain is synchronous; run in thread so we don't block event loop
-        explain_resp = await asyncio_to_thread(run_explain, db, invoice, triggering_step)
-        # persist the explain step into invoice workflow
-        # ensure timestamp exists
-        if "timestamp" not in explain_resp:
-            from datetime import datetime
-            explain_resp["timestamp"] = datetime.utcnow().isoformat() + "Z"
-        await asyncio_to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": explain_resp}})
-        return JSONResponse({"ok": True, "explain": explain_resp})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"explain_failed: {str(e)}")
+        inv = await asyncio_to_thread(db.invoices.find_one, {"_id": invoice_id})
+        if not inv:
+            return JSONResponse({"ok": False, "error": "invoice_not_found"}, status_code=404)
+
+        # Run explain in thread and capture any exception
+        try:
+            loop = asyncio.get_event_loop()
+            resp = await loop.run_in_executor(None, lambda: run_explain(db, inv, (payload or {}).get("triggering_step", {})))
+        except Exception:
+            tb = traceback.format_exc()
+            print("run_explain raised an exception:\n", tb, flush=True)
+            return JSONResponse({"ok": False, "error": "run_explain_failed", "traceback": tb}, status_code=500)
+
+        # Persist the step into invoice._workflow.steps
+        try:
+            step_obj = resp
+            if not inv.get("_workflow"):
+                inv["_workflow"] = {"steps": []}
+            if not isinstance(inv["_workflow"].get("steps"), list):
+                inv["_workflow"]["steps"] = list(inv["_workflow"].get("steps") or [])
+            # ensure timestamp exists
+            if "timestamp" not in step_obj:
+                step_obj["timestamp"] = datetime.utcnow().isoformat() + "Z"
+            inv["_workflow"]["steps"].append(step_obj)
+            await asyncio_to_thread(db.invoices.replace_one, {"_id": invoice_id}, inv)
+        except Exception:
+            tb = traceback.format_exc()
+            print("persist explain step failed:\n", tb, flush=True)
+            return JSONResponse({"ok": True, "explain": resp, "warn": "persist_failed", "persist_traceback": tb})
+
+        return JSONResponse({"ok": True, "explain": resp})
+    except Exception:
+        tb = traceback.format_exc()
+        print("post_explain top-level error:\n", tb, flush=True)
+        return JSONResponse({"ok": False, "error": "server_error", "traceback": tb}, status_code=500)
 
 
 @router.get("/invoices/{invoice_id}/explain", response_class=JSONResponse)
