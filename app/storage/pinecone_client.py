@@ -1,104 +1,115 @@
 # app/storage/pinecone_client.py
 """
-Pinecone vector client wrapper.
-
-Provides:
-- PineconeClient(api_key, environment, index_name, embed_fn=None)
-  - upsert(id, text, metadata=None)
-  - search(query_or_vector, k=5, filter=None) -> list of {id, score, excerpt, metadata}
-Notes:
-- Requires `pinecone-client` package (pip install "pinecone-client").
-- embed_fn: callable(text)->{"embedding":[...]} - if not provided we call OpenAI embed via app.ai.openai_client.OpenAIClient
+Pinecone client wrapper used by get_vector_client().
+This constructor accepts optional args so callers can pass
+explicit values (useful for factory or tests), but also falls
+back to environment variables.
 """
 
-from typing import Optional, Any, List, Dict
 import os
-import math
+import logging
+from typing import Any, Dict, List
 
-# We'll support both Pinecone v3 (preferred) and v2 (fallback)
-_pc_v3 = None
-_pc_v2 = None
-try:
-    from pinecone import Pinecone as _PineconeV3  # v3 SDK
-    _pc_v3 = _PineconeV3
-except Exception:
-    try:
-        import pinecone as _pinecone_v2  # v2 SDK
-        _pc_v2 = _pinecone_v2
-    except Exception:
-        _pc_v2 = None
+import openai
+import pinecone
 
-from app.config import PINECONE_API_KEY, PINECONE_ENVIRONMENT, PINECONE_INDEX_NAME
-from app.ai.openai_client import OpenAIClient
+logger = logging.getLogger(__name__)
 
 class PineconeClient:
-    def __init__(self, api_key: Optional[str] = None, environment: Optional[str] = None, index_name: Optional[str] = None, embed_fn: Optional[Any] = None):
-        if _pc_v3 is None and _pc_v2 is None:
-            raise RuntimeError("pinecone package not installed. Install 'pinecone' (v3) or 'pinecone-client' (v2).")
+    def __init__(
+        self,
+        api_key: str | None = None,
+        env: str | None = None,
+        index_name: str | None = None,
+        embed_model: str | None = None,
+    ):
+        # Accept injected values or read from environment
+        self.api_key = api_key or os.getenv("PINECONE_API_KEY")
+        self.environment = env or os.getenv("PINECONE_ENVIRONMENT")
+        self.index_name = index_name or os.getenv("PINECONE_INDEX_NAME", "invoice-poc")
+        self.embed_model = embed_model or os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 
-        self.api_key = api_key or PINECONE_API_KEY
-        self.environment = environment or PINECONE_ENVIRONMENT
-        self.index_name = index_name or PINECONE_INDEX_NAME
-        if not self.api_key or not self.index_name:
-            raise RuntimeError("Pinecone not configured: set PINECONE_API_KEY and PINECONE_INDEX_NAME (and PINECONE_ENVIRONMENT for v2)")
+        if not self.api_key or not self.environment:
+            raise ValueError("Pinecone API key and environment must be provided")
 
-        self._version = None
-        if _pc_v3 is not None:
-            # v3 client doesn't use environment at init
-            pc = _pc_v3(api_key=self.api_key)
-            self.index = pc.Index(self.index_name)
-            self._version = 3
+        # Init OpenAI API for embeddings (embedding calls use OpenAI)
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if openai_api_key:
+            openai.api_key = openai_api_key
         else:
-            # v2 requires environment
-            if not self.environment:
-                raise RuntimeError("PINECONE_ENVIRONMENT is required for pinecone-client v2.x")
-            _pc_v2.init(api_key=self.api_key, environment=self.environment)
-            self.index = _pc_v2.Index(self.index_name)
-            self._version = 2
+            # We do not raise here because some tests may mock embeddings or
+            # use other embedding backends. But warn for production.
+            logger.warning("OPENAI_API_KEY not set - embeddings will fail if used")
 
-        # embed_fn should return {"embedding": [...]} when called with text
-        self.embed_fn = embed_fn or (OpenAIClient().embed_text)
+        # Initialize pinecone and the index
+        pinecone.init(api_key=self.api_key, environment=self.environment)
+        try:
+            self._index = pinecone.Index(self.index_name)
+        except Exception as e:
+            # Re-raise with context so logs show the intended index/env
+            logger.exception("Failed to open Pinecone index '%s' in env '%s': %s",
+                             self.index_name, self.environment, e)
+            raise
 
-    def upsert(self, id: str, text: str, metadata: Optional[Dict[str, Any]] = None):
-        """
-        Upsert a single chunk into Pinecone. metadata is stored as-is.
-        """
-        emb_res = self.embed_fn(text)
-        vector = emb_res.get("embedding")
-        if vector is None:
-            raise RuntimeError("Embedding generation failed for upsert")
-        if self._version == 3:
-            # v3 expects dicts with id/values/metadata
-            self.index.upsert(vectors=[{"id": id, "values": vector, "metadata": metadata or {}}])
-        else:
-            # v2 expects tuples (id, values, metadata)
-            self.index.upsert(vectors=[(id, vector, metadata or {})])
-        return {"id": id, "metadata": metadata}
+        logger.info("PineconeClient initialized for index=%s env=%s", self.index_name, self.environment)
 
-    def search(self, query: str, k: int = 5, filter: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def embed_text(self, text: str) -> List[float]:
         """
-        Accepts a query string (we will embed it) and returns top-k matches.
-        Returns list of dicts: {id, score, excerpt, metadata}
+        Create an embedding for the given text using OpenAI.
+        Caller should handle OpenAI errors / rate limits.
         """
-        # embed the query
-        emb_res = self.embed_fn(query)
-        vector = emb_res.get("embedding")
-        if vector is None:
-            return []
-        # Pinecone query
-        if self._version == 3:
-            res = self.index.query(vector=vector, top_k=k, include_metadata=True, include_values=False, filter=filter)
-            matches = res.get("matches", [])
-        else:
-            res = self.index.query(queries=[vector], top_k=k, include_metadata=True, include_values=False, filter=filter)
-            matches = res.get("results", [])[0].get("matches", []) if res.get("results") else res.get("matches", [])
-        out = []
+        if not getattr(openai, "api_key", None):
+            raise RuntimeError("OpenAI API key is not configured for embeddings")
+
+        resp = openai.Embedding.create(model=self.embed_model, input=text)
+        return resp["data"][0]["embedding"]
+
+    def upsert(self, id: str, text: str, metadata: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        """
+        Upsert a single vector (embedding created from `text`) into the index.
+        """
+        if metadata is None:
+            metadata = {}
+        vec = self.embed_text(text)
+        self._index.upsert(vectors=[(id, vec, metadata)])
+        return {"ok": True, "id": id}
+
+    def upsert_batch(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Upsert multiple items. Each item should be {id, text, metadata}.
+        """
+        vectors = []
+        for it in items:
+            text = it.get("text") or it.get("chunk_text") or ""
+            vec = self.embed_text(text)
+            vectors.append((it["id"], vec, it.get("metadata", {})))
+        self._index.upsert(vectors=vectors)
+        return {"ok": True, "count": len(vectors)}
+
+    def search(self, query: str, k: int = 3, min_score: float | None = None) -> List[Dict[str, Any]]:
+        """
+        Semantic search for the query string. Returns list of hits with id, score, metadata.
+        """
+        qvec = self.embed_text(query)
+        # include_metadata True to get metadata stored with vector
+        resp = self._index.query(vector=qvec, top_k=k, include_metadata=True)
+        hits = []
+        matches = getattr(resp, "matches", None) or resp.get("matches", [])
         for m in matches:
-            md = m.get("metadata", {}) if isinstance(m, dict) else {}
-            out.append({
-                "id": m.get("id"),
-                "score": m.get("score"),
-                "excerpt": (md or {}).get("chunk_text_preview") or (md or {}).get("text") or "",
-                "metadata": md
+            score = float(m.score) if hasattr(m, "score") else float(m["score"])
+            if min_score is not None and score < min_score:
+                continue
+            hits.append({
+                "id": m.id if hasattr(m, "id") else m["id"],
+                "score": round(score, 6),
+                "metadata": getattr(m, "metadata", None) or m.get("metadata", {})
             })
-        return out
+        return hits
+
+    def describe_index(self) -> Dict[str, Any]:
+        try:
+            idx_meta = pinecone.describe_index(self.index_name)
+            return {"ok": True, "index": idx_meta}
+        except Exception as e:
+            logger.exception("describe_index failed: %s", e)
+            return {"ok": False, "error": str(e)}
