@@ -8,7 +8,7 @@ and then creates a Pinecone index with that dimension if it doesn't exist.
 Environment variables used (or replace inline):
 - OPENAI_API_KEY
 - PINECONE_API_KEY
-- PINECONE_ENV
+- PINECONE_ENVIRONMENT (preferred) or PINECONE_ENV (legacy)
 - PINECONE_INDEX_NAME (defaults to 'invoice-poc')
 """
 
@@ -27,7 +27,8 @@ except Exception:
 # Set these environment vars or replace below
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") or "<REPLACE_WITH_OPENAI_KEY>"
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY") or "<REPLACE_WITH_PINECONE_KEY>"
-PINECONE_ENV = os.environ.get("PINECONE_ENV") or "<REPLACE_WITH_PINECONE_ENV>"
+# Prefer PINECONE_ENVIRONMENT but fall back to PINECONE_ENV for backward compatibility
+PINECONE_ENV = os.environ.get("PINECONE_ENVIRONMENT") or os.environ.get("PINECONE_ENV") or "<REPLACE_WITH_PINECONE_ENV>"
 INDEX_NAME = os.environ.get("PINECONE_INDEX_NAME") or "invoice-poc"
 
 openai.api_key = OPENAI_API_KEY
