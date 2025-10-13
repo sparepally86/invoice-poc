@@ -4,6 +4,8 @@ from fastapi.responses import JSONResponse
 from typing import Dict, Any, Optional
 from app.agents.retrieval import index_document, retrieve
 from app.storage.vector_client import get_vector_client
+import os
+import traceback
 
 router = APIRouter()
 
@@ -18,8 +20,16 @@ async def dev_retrieve_index(payload: Dict[str, Any] = Body(...)):
     metadata = payload.get("metadata", {})
     if not doc_id or not text:
         return JSONResponse({"ok": False, "error": "missing id or text"}, status_code=400)
-    res = index_document(doc_id, text, metadata=metadata)
-    return JSONResponse({"ok": True, "indexed_chunks": res})
+    try:
+        res = index_document(doc_id, text, metadata=metadata)
+        return JSONResponse({"ok": True, "indexed_chunks": res})
+    except Exception as e:
+        # Expose error details to help diagnose 500s; include traceback if API_DEBUG=true
+        tb = traceback.format_exc()
+        body = {"ok": False, "error": str(e)}
+        if os.getenv("API_DEBUG", "false").lower() in ("1", "true", "yes"):
+            body["traceback"] = tb
+        return JSONResponse(body, status_code=500)
 
 
 @router.get("/api/v1/dev/retrieve/search", response_class=JSONResponse)

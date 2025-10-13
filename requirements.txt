@@ -11,5 +11,5 @@ dnspython
 httpx
 python-dotenv
 requests
-pinecone-client==2.2.2
+pinecone
 openai==0.28.1
