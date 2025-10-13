@@ -8,6 +8,7 @@ from app.agents.coding import run_coding         # coding agent
 from app.agents.risk import run_risk_and_approval  # risk & approval agent
 from app.utils.state import update_invoice_status  # centralized status helper
 from app.agents.explain import run_explain #explaination agent
+from app.utils.normalize_invoice import ensure_minimal_structure
 
 _worker_task = None
 _PEAK_SLEEP = 0.8
@@ -98,6 +99,8 @@ async def process_task(task):
             return
 
         invoice = await asyncio.to_thread(db.invoices.find_one, {"_id": invoice_id})
+        # normalize invoice to ensure consistent lines/items structure
+        invoice = ensure_minimal_structure(invoice)
         if not invoice:
             await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "error", "error": "invoice_not_found"}})
             return
@@ -155,6 +158,7 @@ async def process_task(task):
         # --- 2) PO Matching (only if validated) ---
         # re-fetch invoice in case validation added fields
         invoice = await asyncio.to_thread(db.invoices.find_one, {"_id": invoice_id})
+        invoice = ensure_minimal_structure(invoice)
         header = invoice.get("header", {}) if invoice else {}
         po_number = header.get("po_number") or header.get("po") or header.get("po_reference")
 
@@ -205,6 +209,7 @@ async def process_task(task):
             # --- 3) CODING (only if PO matched) ---
             # re-fetch invoice again to include any PO-match annotations
             invoice = await asyncio.to_thread(db.invoices.find_one, {"_id": invoice_id})
+            invoice = ensure_minimal_structure(invoice)
             try:
                 coding_out = await asyncio.to_thread(run_coding, db, invoice)
                 # persist coding agent output to workflow

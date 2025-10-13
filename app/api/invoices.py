@@ -9,6 +9,7 @@ from bson import ObjectId
 from starlette.responses import StreamingResponse
 import json
 import asyncio
+from app.utils.normalize_invoice import ensure_minimal_structure
 
 router = APIRouter()
 
@@ -28,108 +29,6 @@ def format_sse(event: str, data: dict):
     return payload
 
 
-def ensure_minimal_structure(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize payload to be tolerant and backward-compatible.
-    Ensures:
-      - payload['lines'] and payload['items'] both exist and mirror each other.
-      - header.amount is populated (float) from common shapes like header.grand_total.value
-      - header.grand_total exists and contains numeric 'value' where possible
-      - each invoice line has a numeric 'amount' field (float) derived from common keys)
-    """
-    payload = dict(payload) if payload else {}
-    # Header normalization (support multiple shapes)
-    header = payload.get('header') or {}
-    if not isinstance(header, dict):
-        header = {}
-
-    # invoice_ref can be present as header.invoice_ref (string) or header.invoice_number dict
-    inv_ref = header.get('invoice_ref') or None
-    inv_number = header.get('invoice_number')
-    if isinstance(inv_number, dict):
-        inv_ref = inv_number.get('value') or inv_ref
-    if inv_ref and not header.get('invoice_ref'):
-        header['invoice_ref'] = inv_ref
-
-    # Ensure lines/items exist and mirror
-    _lines = payload.get('lines') if payload.get('lines') is not None else payload.get('items', [])
-    if _lines is None:
-        _lines = []
-    if not isinstance(_lines, list):
-        _lines = [_lines]
-    payload['lines'] = _lines
-    payload['items'] = list(_lines)
-
-    # Normalize header.amount (float) from grand_total or other common keys if missing
-    if 'amount' not in header or header.get('amount') in (None, ''):
-        gt = header.get('grand_total')
-        if isinstance(gt, dict) and 'value' in gt:
-            try:
-                header['amount'] = float(gt.get('value') or 0.0)
-            except Exception:
-                pass
-        elif isinstance(gt, (int, float, str)) and gt != "":
-            try:
-                header['amount'] = float(gt)
-            except Exception:
-                pass
-        else:
-            for k in ('total', 'grand_total_amount', 'amount_total'):
-                if k in header:
-                    try:
-                        header['amount'] = float(header.get(k))
-                        break
-                    except Exception:
-                        pass
-
-    # Ensure header.grand_total is a dict with numeric 'value'
-    if not isinstance(header.get('grand_total'), dict):
-        if 'amount' in header:
-            try:
-                header['grand_total'] = {'value': float(header['amount'])}
-            except Exception:
-                header['grand_total'] = {'value': header.get('amount')}
-    else:
-        try:
-            header['grand_total']['value'] = float(header['grand_total'].get('value') or header.get('amount') or 0.0)
-        except Exception:
-            pass
-
-    # Normalize per-line amounts to ensure 'amount' exists and is float
-    for ln in payload.get('lines', []):
-        if not isinstance(ln, dict):
-            continue
-        if 'amount' in ln and ln.get('amount') not in (None, ''):
-            try:
-                ln['amount'] = float(ln.get('amount'))
-            except Exception:
-                try:
-                    ln['amount'] = float(str(ln.get('amount')).replace(',', '').strip())
-                except Exception:
-                    ln['amount'] = 0.0
-        else:
-            found = False
-            for key in ('line_total', 'total', 'price', 'value', 'amount_total'):
-                if key in ln and ln.get(key) not in (None, ''):
-                    try:
-                        ln['amount'] = float(ln.get(key))
-                        found = True
-                        break
-                    except Exception:
-                        try:
-                            ln['amount'] = float(str(ln.get(key)).replace(',', '').strip())
-                            found = True
-                            break
-                        except Exception:
-                            pass
-            if not found:
-                ln['amount'] = 0.0
-
-    payload['header'] = header
-    return payload
-    payload.setdefault("validation", {})
-    payload.setdefault("ml_metadata", {})
-
-    return payload
 
 
 @router.post("/incoming", response_class=JSONResponse)
