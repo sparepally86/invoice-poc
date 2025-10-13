@@ -1,10 +1,12 @@
 // src/lib/api.js
 import axios from "axios";
 
-const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || "").replace(/\/$/, "") || "https://invoice-poc-1gpt.onrender.com";
+// Prefer VITE_API_BASE (matches ExplanationPanel), fallback to VITE_BACKEND_URL, then Render URL
+const RAW_BASE = (import.meta.env.VITE_API_BASE || import.meta.env.VITE_BACKEND_URL || "").replace(/\/$/, "");
+const API_BASE = RAW_BASE || "https://invoice-poc-1gpt.onrender.com";
 
 const client = axios.create({
-  baseURL: BACKEND_URL + "/api/v1",
+  baseURL: API_BASE + "/api/v1",
   timeout: 20000,
 });
 
