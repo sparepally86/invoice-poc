@@ -124,8 +124,17 @@ def run_coding(db, invoice: Dict[str, Any]) -> Dict[str, Any]:
                     pm = invoice["_po_match_result"]
                     # find matched po line mapping (best-effort)
                     matches = pm.get("line_matches") or []
+                    # Canonicalize old keys to item_index for backward compatibility
+                    for mm in matches:
+                        if mm is None or not isinstance(mm, dict):
+                            continue
+                        if "item_index" not in mm:
+                            if "invoice_item_index" in mm:
+                                mm["item_index"] = mm.get("invoice_item_index")
+                            elif "invoice_item_idx" in mm:
+                                mm["item_index"] = mm.get("invoice_item_idx")
                     for m in matches:
-                        if (m.get("item_index") == idx or m.get("invoice_item_index") == idx) and m.get("po_line_coding"):
+                        if m.get("item_index") == idx and m.get("po_line_coding"):
                             po_line_coding = m.get("po_line_coding")
                             break
 
