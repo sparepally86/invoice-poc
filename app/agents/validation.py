@@ -48,8 +48,18 @@ def run_validation(db, invoice_doc: Dict[str, Any]) -> Dict[str, Any]:
             "message": f"Vendor '{vendor_id}' not found in vendor master"
         })
 
-    # Amount vs items sum
-    header_amount = header.get("amount", 0) or 0
+    # Amount vs items sum (robust header amount parsing)
+    header_amount = header.get("amount")
+    if header_amount is None:
+        gt = header.get("grand_total")
+        if isinstance(gt, dict):
+            header_amount = gt.get("value")
+        else:
+            header_amount = gt
+    try:
+        header_amount = float(header_amount) if header_amount is not None else 0.0
+    except Exception:
+        header_amount = 0.0
     sum_items = float(sum([float(i.get("amount", 0) or 0) for i in items]))
     # avoid division by zero
     diff_pct = 0.0
