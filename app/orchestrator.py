@@ -1,6 +1,7 @@
 # app/orchestrator.py
 import asyncio
 import datetime
+import logging
 from app.storage.mongo_client import get_db
 from app.agents.validation import run_validation   # adjust import path if different
 from app.agents.po_match import run_po_matching   # adjust import path if different
@@ -72,6 +73,37 @@ def _append_explain_step_to_invoice(db, invoice_id: str, explain_step: dict):
             pass
 
 
+def _safe_run_explain_and_persist(db, invoice_id: str, invoice_snapshot: dict, trigger_step: dict) -> bool:
+    """
+    Run run_explain synchronously and persist either the explain step or an error step
+    into the invoice workflow so failures are visible (especially in prod).
+    """
+    try:
+        explain_resp = run_explain(db, invoice_snapshot, trigger_step)
+        if isinstance(explain_resp, dict):
+            if "timestamp" not in explain_resp:
+                explain_resp["timestamp"] = datetime.datetime.utcnow().isoformat() + "Z"
+            db.invoices.update_one({"_id": invoice_id}, {"$push": {"_workflow.steps": explain_resp}})
+            return True
+        else:
+            logging.error("run_explain returned non-dict for invoice %s: %s", invoice_id, type(explain_resp))
+    except Exception as e:
+        logging.exception("ExplainAgent failed for invoice %s: %s", invoice_id, str(e))
+        err_step = {
+            "agent": "ExplainAgent",
+            "invoice_id": invoice_id,
+            "status": "failed",
+            "result": {"error": str(e)},
+            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        }
+        try:
+            db.invoices.update_one({"_id": invoice_id}, {"$push": {"_workflow.steps": err_step}})
+        except Exception:
+            # Last resort: at least log it
+            logging.exception("Failed to persist ExplainAgent error step for invoice %s", invoice_id)
+    return False
+
+
 async def process_task(task):
     """
     Process a single task. Supports 'process_invoice' tasks.
@@ -120,19 +152,8 @@ async def process_task(task):
 
         # If validation indicates human required (status not 'completed') -> create human task
         if validation_out.get("status") != "completed":
-            # BEFORE creating the human task, call ExplainAgent and persist its step so reviewers see the explanation
-            try:
-                # use to_thread so sync run_explain doesn't block the event loop
-                explain_resp = await asyncio.to_thread(run_explain, db, invoice, validation_out)
-                # persist the explain_resp as a workflow step
-                await asyncio.to_thread(_append_explain_step_to_invoice, db, invoice_id, explain_resp)
-            except Exception:
-                # non-fatal; proceed to create human task anyway
-                try:
-                    import logging
-                    logging.exception("ExplainAgent invocation failed for invoice %s during validation path", invoice_id)
-                except Exception:
-                    pass
+            # BEFORE creating the human task, run ExplainAgent and persist success or failure as a workflow step
+            await asyncio.to_thread(_safe_run_explain_and_persist, db, invoice_id, invoice, validation_out)
 
             now = datetime.datetime.utcnow().isoformat() + "Z"
             human_task = {
@@ -174,16 +195,8 @@ async def process_task(task):
 
             # If PO matching produced issues (partial_match), create a human_review task
             if po_out.get("status") != "matched":
-                # BEFORE creating the human task for PO mismatch, call ExplainAgent to generate context for the reviewer
-                try:
-                    explain_resp = await asyncio.to_thread(run_explain, db, invoice, po_out)
-                    await asyncio.to_thread(_append_explain_step_to_invoice, db, invoice_id, explain_resp)
-                except Exception:
-                    try:
-                        import logging
-                        logging.exception("ExplainAgent invocation failed for invoice %s during PO matching path", invoice_id)
-                    except Exception:
-                        pass
+                # BEFORE creating the human task for PO mismatch, run ExplainAgent and persist success or failure
+                await asyncio.to_thread(_safe_run_explain_and_persist, db, invoice_id, invoice, po_out)
 
                 now = datetime.datetime.utcnow().isoformat() + "Z"
                 human_task = {
