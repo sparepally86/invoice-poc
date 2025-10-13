@@ -19,6 +19,21 @@ def _find_with_skip_sync(coll, filter_q, skip, limit=1):
     cursor = coll.find(filter_q).skip(skip).limit(limit)
     return list(cursor)
 
+# --- DB health check ---
+@router.get("/dev/db/health")
+async def dev_db_health():
+    """
+    Quick MongoDB connectivity check.
+    Returns the result of a ping command against the configured database.
+    """
+    db = get_db()
+    try:
+        res = await asyncio.to_thread(db.command, "ping")
+        return {"ok": True, "ping": res}
+    except Exception as e:
+        # surface error for quick diagnostics
+        raise HTTPException(status_code=500, detail=f"mongo_ping_failed: {e}")
+
 # The new endpoint
 @router.post("/dev/generate-invoice")
 async def generate_invoice(

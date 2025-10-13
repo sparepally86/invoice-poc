@@ -6,6 +6,8 @@ from urllib.parse import urlparse
 
 MONGO_URI = os.environ.get("MONGODB_URI")
 MONGO_DBNAME = os.environ.get("MONGODB_DB")  # optional override
+# Optional: force TLS via env; if unset, defer to URI settings (recommended)
+MONGO_TLS_ENV = os.environ.get("MONGODB_TLS")
 _default_db_name = "invoice_poc"
 
 _client: Optional[MongoClient] = None
@@ -36,7 +38,13 @@ def get_db():
         raise RuntimeError("MONGODB_URI not set")
 
     if _client is None:
-        _client = MongoClient(MONGO_URI, tls=True)
+        # Respect explicit MONGODB_TLS if provided, otherwise let URI decide (mongodb+srv implies TLS)
+        if MONGO_TLS_ENV is not None:
+            tls_flag = str(MONGO_TLS_ENV).lower() in ("1", "true", "yes", "on")
+            _client = MongoClient(MONGO_URI, tls=tls_flag)
+        else:
+            # Do not force TLS; rely on connection string options
+            _client = MongoClient(MONGO_URI)
 
     # Determine DB name
     db_name = MONGO_DBNAME or _extract_db_from_uri(MONGO_URI) or _default_db_name
