@@ -4,15 +4,20 @@ from app.storage.mongo_client import get_db
 from fastapi.responses import JSONResponse
 from fastapi import Body, Path
 from bson import ObjectId
+import datetime
 
 router = APIRouter()
 
 @router.get("/tasks")
-async def list_tasks(status: str = Query(None)):
+async def list_tasks(status: str = Query(None), includeResolved: bool = Query(False)):
     db = get_db()
     q = {}
     if status:
         q["status"] = status
+    else:
+        # By default, hide resolved/done tasks from the list view
+        if not includeResolved:
+            q["status"] = {"$nin": ["done", "resolved"]}
     docs = list(db.tasks.find(q).sort([("created_at", -1)]).limit(200))
     # Convert ObjectId etc. (we mainly use string _id if we set invoice_id as _id)
     results = []
