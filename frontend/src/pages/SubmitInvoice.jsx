@@ -97,31 +97,122 @@ function InvoiceJourney({ invoiceId }) {
     const ts = s.timestamp || s.created_at || "";
     const short = s.note || s.result?.summary || (s.result?.issues && s.result.issues.length ? s.result.issues.map(i => i.code).join(", ") : "");
     return (
-      <div key={idx} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "8px 0", borderBottom: "1px solid #f6f6f6" }}>
-        <div style={{ fontSize: 20 }}>{emoji}</div>
+      <div key={idx} style={{ 
+        display: "flex", 
+        gap: 16, 
+        alignItems: "flex-start", 
+        padding: "12px 0", 
+        borderBottom: "1px solid var(--secondary-200)"
+      }}>
+        <div style={{ 
+          fontSize: 24, 
+          width: 40, 
+          height: 40,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "var(--secondary-100)",
+          borderRadius: "8px"
+        }}>
+          {emoji}
+        </div>
         <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 600 }}>{label} <span style={{ color: "#666", fontSize: 12 }}>· {t}</span></div>
-          <div style={{ color: "#444", fontSize: 13 }}>{short}</div>
-          <div style={{ color: "#999", fontSize: 12 }}>{ts}</div>
+          <div style={{ 
+            fontWeight: 600,
+            color: "var(--secondary-900)",
+            marginBottom: 4
+          }}>
+            {label} 
+            <span style={{ 
+              color: "var(--secondary-500)", 
+              fontSize: 12, 
+              fontWeight: 500,
+              background: "var(--secondary-100)",
+              padding: "2px 6px",
+              borderRadius: "4px",
+              marginLeft: 8
+            }}>
+              {t}
+            </span>
+          </div>
+          {short && (
+            <div style={{ 
+              color: "var(--secondary-700)", 
+              fontSize: 14,
+              marginBottom: 4,
+              lineHeight: 1.4
+            }}>
+              {short}
+            </div>
+          )}
+          {ts && (
+            <div style={{ 
+              color: "var(--secondary-500)", 
+              fontSize: 12
+            }}>
+              {ts}
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
   return (
-    <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <h3 style={{ margin: 0 }}>Invoice journey</h3>
-        <div style={{ fontSize: 13, color: connected ? "#059669" : "#b91c1c" }}>{connected ? "Live" : "Disconnected"}</div>
+    <div className="card">
+      <div className="card-header">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h3 className="card-title">📊 Invoice Journey</h3>
+          <div style={{ 
+            fontSize: 12, 
+            fontWeight: 600,
+            color: connected ? "var(--success-700)" : "var(--error-700)",
+            background: connected ? "var(--success-100)" : "var(--error-100)",
+            padding: "4px 8px",
+            borderRadius: "4px"
+          }}>
+            {connected ? "🟢 Live" : "🔴 Disconnected"}
+          </div>
+        </div>
       </div>
 
-      <div style={{ marginBottom: 8 }}>
-        <strong>Current status: </strong> {status || "N/A"} &nbsp; <span>{STATUS_EMOJI[status] || STATUS_EMOJI.UNKNOWN}</span>
-      </div>
+      <div className="card-body" style={{ padding: 0 }}>
+        <div style={{ 
+          padding: "16px 24px",
+          borderBottom: "1px solid var(--secondary-200)",
+          background: "var(--secondary-50)"
+        }}>
+          <strong>Current Status: </strong> 
+          <span style={{
+            color: "var(--secondary-800)",
+            background: "var(--secondary-200)",
+            padding: "4px 8px",
+            borderRadius: "4px",
+            fontSize: 14,
+            fontWeight: 500
+          }}>
+            {status || "N/A"} {STATUS_EMOJI[status] || STATUS_EMOJI.UNKNOWN}
+          </span>
+        </div>
 
-      <div ref={containerRef} style={{ maxHeight: 420, overflowY: "auto" }}>
-        {steps.length === 0 && <div style={{ color: "#666" }}>No steps yet — submit invoice to start processing.</div>}
-        {steps.map((s, i) => renderStep(s, i))}
+        <div ref={containerRef} style={{ 
+          maxHeight: 420, 
+          overflowY: "auto",
+          padding: "0 24px"
+        }}>
+          {steps.length === 0 && (
+            <div style={{ 
+              color: "var(--secondary-500)",
+              textAlign: "center",
+              padding: 32,
+              fontStyle: "italic"
+            }}>
+              No steps yet — submit invoice to start processing.
+            </div>
+          )}
+          {steps.map((s, i) => renderStep(s, i))}
+          {steps.length > 0 && <div style={{ height: 16 }}></div>}
+        </div>
       </div>
     </div>
   );
@@ -240,69 +331,119 @@ export default function SubmitInvoice() {
   }
 
   return (
-    <div style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
+    <div style={{ display: "flex", gap: 32, alignItems: "flex-start" }}>
       {/* LEFT: Generate + Submit panel */}
       <div style={{ flex: 1, maxWidth: "50%", minWidth: 460 }}>
-        <h1>Submit Invoice (Capture simulation)</h1>
+        <div className="card">
+          <div className="card-header">
+            <h2 className="card-title">📤 Submit Invoice</h2>
+          </div>
+          <div className="card-body">
+            <div className="form-group">
+              <div className="form-label">Invoice Type</div>
+              <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>
+                <label style={{ 
+                  display: "flex", 
+                  gap: 8, 
+                  alignItems: "center",
+                  padding: "8px 12px",
+                  background: mode === "po" ? "var(--primary-100)" : "var(--secondary-100)",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  border: `2px solid ${mode === "po" ? "var(--primary-300)" : "transparent"}`
+                }}>
+                  <input type="radio" name="mode" value="po" checked={mode === "po"} onChange={() => setMode("po")} />
+                  PO-based
+                </label>
 
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center", marginBottom: 12 }}>
-          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input type="radio" name="mode" value="po" checked={mode === "po"} onChange={() => setMode("po")} />
-            PO-based (backend chooses random PO if none specified)
-          </label>
+                <label style={{ 
+                  display: "flex", 
+                  gap: 8, 
+                  alignItems: "center",
+                  padding: "8px 12px",
+                  background: mode === "nonpo" ? "var(--primary-100)" : "var(--secondary-100)",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  border: `2px solid ${mode === "nonpo" ? "var(--primary-300)" : "transparent"}`
+                }}>
+                  <input type="radio" name="mode" value="nonpo" checked={mode === "nonpo"} onChange={() => setMode("nonpo")} />
+                  Non-PO based
+                </label>
+              </div>
+            </div>
 
-          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input type="radio" name="mode" value="nonpo" checked={mode === "nonpo"} onChange={() => setMode("nonpo")} />
-            Non-PO based
-          </label>
+            <div className="form-group">
+              <div className="form-label">Options</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={splitLineItem} onChange={(e) => setSplitLineItem(e.target.checked)} />
+                  Split line item
+                </label>
 
-          <label style={{ display: "flex", gap: 8, alignItems: "center", marginLeft: 12 }}>
-            <input type="checkbox" checked={splitLineItem} onChange={(e) => setSplitLineItem(e.target.checked)} />
-            Split line item
-          </label>
+                <button 
+                  onClick={handleGenerate} 
+                  disabled={loadingGen} 
+                  className="btn btn-secondary"
+                  style={{ marginLeft: "auto" }}
+                >
+                  {loadingGen ? "Generating..." : "🎲 Generate"}
+                </button>
+              </div>
+            </div>
 
-          <button onClick={handleGenerate} disabled={loadingGen} style={{ marginLeft: "auto" }}>
-            {loadingGen ? "Generating..." : "Generate"}
-          </button>
-        </div>
+            <div className="form-group">
+              <div className="form-label">Test Scenarios</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={missMandatory} onChange={(e) => setMissMandatory(e.target.checked)} />
+                  Miss mandatory field
+                </label>
 
-        <div style={{ display: "flex", gap: 18, marginBottom: 12 }}>
-          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input type="checkbox" checked={missMandatory} onChange={(e) => setMissMandatory(e.target.checked)} />
-            Miss mandatory field
-          </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={badVendor} onChange={(e) => setBadVendor(e.target.checked)} />
+                  Bad vendor
+                </label>
 
-          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input type="checkbox" checked={badVendor} onChange={(e) => setBadVendor(e.target.checked)} />
-            Bad / missing vendor
-          </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={badPO} onChange={(e) => setBadPO(e.target.checked)} />
+                  Bad PO match
+                </label>
+              </div>
+            </div>
 
-          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input type="checkbox" checked={badPO} onChange={(e) => setBadPO(e.target.checked)} />
-            Bad / mismatched PO
-          </label>
-        </div>
+            <div className="form-group">
+              <div className="form-label">Invoice JSON</div>
+              <textarea
+                rows={16}
+                value={jsonText}
+                onChange={(e) => setJsonText(e.target.value)}
+                className="form-textarea"
+              />
+            </div>
 
-        <textarea
-          rows={16}
-          value={jsonText}
-          onChange={(e) => setJsonText(e.target.value)}
-          style={{ width: "100%", fontFamily: "monospace", padding: 12 }}
-        />
+            <div className="flex gap-4 items-center">
+              <button 
+                onClick={handleSubmitInvoice} 
+                disabled={loadingSubmit} 
+                className="btn btn-primary"
+              >
+                {loadingSubmit ? "Submitting..." : "🚀 Submit Invoice"}
+              </button>
 
-        <div style={{ marginTop: 12 }}>
-          <button onClick={handleSubmitInvoice} disabled={loadingSubmit} style={{ padding: "8px 12px" }}>
-            {loadingSubmit ? "Submitting..." : "Submit Invoice"}
-          </button>
+              <button
+                onClick={() => { setJsonText("{}"); setStatusMsg("Cleared"); setLastInvoiceId(null); }}
+                className="btn btn-secondary"
+              >
+                🗑️ Clear
+              </button>
+            </div>
 
-          <button
-            onClick={() => { setJsonText("{}"); setStatusMsg("Cleared"); setLastInvoiceId(null); }}
-            style={{ marginLeft: 8, padding: "8px 12px" }}
-          >
-            Clear
-          </button>
-
-          <div style={{ marginTop: 10, color: statusMsg?.startsWith("Error") ? "#b91c1c" : "#065f46" }}>{statusMsg}</div>
+            {statusMsg && (
+              <div className={`alert ${statusMsg.startsWith("Error") || statusMsg.includes("error") ? "alert-error" : "alert-success"}`}>
+                {statusMsg}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -311,17 +452,14 @@ export default function SubmitInvoice() {
         {lastInvoiceId ? (
           <InvoiceJourney invoiceId={lastInvoiceId} />
         ) : (
-          <div
-            style={{
-              border: "1px dashed #ccc",
-              borderRadius: 8,
-              padding: 24,
-              color: "#777",
-              textAlign: "center",
-              marginTop: 60,
-            }}
-          >
-            🧾 Generate and Submit an invoice to view its live journey here.
+          <div className="card">
+            <div className="card-body text-center" style={{ padding: 48 }}>
+              <div style={{ fontSize: 48, marginBottom: 16 }}>🧾</div>
+              <h3 style={{ color: "var(--secondary-600)", margin: 0 }}>Invoice Journey</h3>
+              <p style={{ color: "var(--secondary-500)", margin: "8px 0 0 0" }}>
+                Generate and submit an invoice to view its live processing journey here.
+              </p>
+            </div>
           </div>
         )}
       </div>

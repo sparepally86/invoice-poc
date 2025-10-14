@@ -2,6 +2,7 @@
 import random
 import datetime
 import asyncio
+from typing import Optional
 from fastapi import APIRouter, Query, HTTPException
 from app.storage.mongo_client import get_db
 
@@ -38,8 +39,8 @@ async def dev_db_health():
 @router.post("/dev/generate-invoice")
 async def generate_invoice(
     mode: str = Query("po"),                    # "po" or "nonpo"
-    po_number: str | None = Query(None),        # optional; backend may pick random if mode=po
-    split_first_line: bool | None = Query(False)
+    po_number: Optional[str] = Query(None),     # optional; backend may pick random if mode=po
+    split_first_line: Optional[bool] = Query(False)
 ):
     """
     Dev helper:

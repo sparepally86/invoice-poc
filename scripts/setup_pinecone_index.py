@@ -14,7 +14,7 @@ Environment variables used (or replace inline):
 
 import os
 import openai
-import pinecone
+from pinecone import Pinecone, ServerlessSpec
 import json
 
 # Load .env if available (optional)
@@ -28,7 +28,7 @@ except Exception:
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") or "<REPLACE_WITH_OPENAI_KEY>"
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY") or "<REPLACE_WITH_PINECONE_KEY>"
 # Prefer PINECONE_ENVIRONMENT but fall back to PINECONE_ENV for backward compatibility
-PINECONE_ENV = os.environ.get("PINECONE_ENVIRONMENT") or os.environ.get("PINECONE_ENV") or "<REPLACE_WITH_PINECONE_ENV>"
+PINECONE_ENV = os.environ.get("PINECONE_ENVIRONMENT") or os.environ.get("PINECONE_ENV") or "us-east-1-aws"
 INDEX_NAME = os.environ.get("PINECONE_INDEX_NAME") or "invoice-poc"
 
 openai.api_key = OPENAI_API_KEY
@@ -41,10 +41,21 @@ dim = len(vec)
 print("Embedding dimension:", dim)
 
 # 2) init pinecone and create index if not exists
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
-if INDEX_NAME not in pinecone.list_indexes():
+pc = Pinecone(api_key=PINECONE_API_KEY)
+existing_indexes = pc.list_indexes().names()
+
+if INDEX_NAME not in existing_indexes:
     print("Creating Pinecone index:", INDEX_NAME)
-    pinecone.create_index(INDEX_NAME, dimension=dim, metric="cosine")
+    pc.create_index(
+        name=INDEX_NAME,
+        dimension=dim,
+        metric="cosine",
+        spec=ServerlessSpec(
+            cloud='aws',
+            region='us-east-1'
+        )
+    )
+    print(f"Created index '{INDEX_NAME}' with dimension {dim}")
 else:
     print("Index already exists:", INDEX_NAME)
 

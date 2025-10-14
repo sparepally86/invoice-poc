@@ -8,20 +8,21 @@ back to environment variables.
 
 import os
 import logging
+from typing import Optional, Union
 from typing import Any, Dict, List
 
 import openai
-import pinecone
+from pinecone import Pinecone
 
 logger = logging.getLogger(__name__)
 
 class PineconeClient:
     def __init__(
         self,
-        api_key: str | None = None,
-        env: str | None = None,
-        index_name: str | None = None,
-        embed_model: str | None = None,
+        api_key: Optional[str] = None,
+        env: Optional[str] = None,
+        index_name: Optional[str] = None,
+        embed_model: Optional[str] = None,
     ):
         # Accept injected values or read from environment
         self.api_key = api_key or os.getenv("PINECONE_API_KEY")
@@ -41,10 +42,10 @@ class PineconeClient:
             # use other embedding backends. But warn for production.
             logger.warning("OPENAI_API_KEY not set - embeddings will fail if used")
 
-        # Initialize pinecone and the index
-        pinecone.init(api_key=self.api_key, environment=self.environment)
+        # Initialize pinecone and the index (v3 API)
+        self._pc = Pinecone(api_key=self.api_key)
         try:
-            self._index = pinecone.Index(self.index_name)
+            self._index = self._pc.Index(self.index_name)
         except Exception as e:
             # Re-raise with context so logs show the intended index/env
             logger.exception("Failed to open Pinecone index '%s' in env '%s': %s",
@@ -64,7 +65,7 @@ class PineconeClient:
         resp = openai.Embedding.create(model=self.embed_model, input=text)
         return resp["data"][0]["embedding"]
 
-    def upsert(self, id: str, text: str, metadata: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def upsert(self, id: str, text: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Upsert a single vector (embedding created from `text`) into the index.
         """
@@ -86,7 +87,7 @@ class PineconeClient:
         self._index.upsert(vectors=vectors)
         return {"ok": True, "count": len(vectors)}
 
-    def search(self, query: str, k: int = 3, min_score: float | None = None) -> List[Dict[str, Any]]:
+    def search(self, query: str, k: int = 3, min_score: Optional[float] = None) -> List[Dict[str, Any]]:
         """
         Semantic search for the query string. Returns list of hits with id, score, metadata.
         """
@@ -108,7 +109,7 @@ class PineconeClient:
 
     def describe_index(self) -> Dict[str, Any]:
         try:
-            idx_meta = pinecone.describe_index(self.index_name)
+            idx_meta = self._pc.describe_index(self.index_name)
             return {"ok": True, "index": idx_meta}
         except Exception as e:
             logger.exception("describe_index failed: %s", e)

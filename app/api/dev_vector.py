@@ -38,10 +38,19 @@ async def dev_vector_search(q: str = Query(...), k: int = Query(5), loc: Optiona
       /api/v1/dev/vector/search?q=laptop&k=3&loc=mumbai
     """
     vc = get_vector_client()
-    filter_md = None
-    if loc:
-        filter_md = {"loc": loc}
-    results = vc.search(q, k=k, filter=filter_md)
+    # Note: filter not yet implemented in PineconeClient.search method
+    # For now, just do basic search and filter results afterwards if needed
+    results = vc.search(q, k=k)
+    
+    # Apply post-filtering if loc is specified
+    if loc and results:
+        filtered_results = []
+        for result in results:
+            metadata = result.get("metadata", {})
+            if metadata.get("loc") == loc:
+                filtered_results.append(result)
+        results = filtered_results
+    
     return JSONResponse({"ok": True, "query": q, "k": k, "results": results})
 
 # --- Compatibility aliases (for docs/tools expecting /dev/retrieve/*) ---
