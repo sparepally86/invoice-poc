@@ -65,27 +65,46 @@ class PineconeClient:
         resp = openai.Embedding.create(model=self.embed_model, input=text)
         return resp["data"][0]["embedding"]
 
-    def upsert(self, id: str, text: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def upsert(self, id: str, text: str, metadata: Dict[str, Any] | None = None, embedding: List[float] | None = None) -> Dict[str, Any]:
         """
         Upsert a single vector (embedding created from `text`) into the index.
+        If 'embedding' is provided it will be used directly; otherwise the server will call OpenAI.
         """
         if metadata is None:
             metadata = {}
-        vec = self.embed_text(text)
-        self._index.upsert(vectors=[(id, vec, metadata)])
+
+        if embedding is None:
+            # Use OpenAI embedding hook (raise descriptive error if not configured)
+            if not getattr(openai, "api_key", None):
+                raise RuntimeError("OpenAI API key is not configured for embeddings")
+            embedding = openai.Embedding.create(model=self.embed_model, input=text)["data"][0]["embedding"]
+
+        try:
+            # New SDK and old SDK both support upsert(this shape)
+            self._index.upsert(vectors=[(id, embedding, metadata)])
+        except Exception as e:
+            logger.exception("Upsert failed for id=%s: %s", id, e)
+            raise
         return {"ok": True, "id": id}
+
 
     def upsert_batch(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Upsert multiple items. Each item should be {id, text, metadata}.
+        Upsert multiple items. Each item should be {id, text, metadata, embedding?}.
+        If an item provides 'embedding' it will be used; otherwise the embedding is computed.
         """
         vectors = []
         for it in items:
             text = it.get("text") or it.get("chunk_text") or ""
-            vec = self.embed_text(text)
-            vectors.append((it["id"], vec, it.get("metadata", {})))
+            emb = it.get("embedding")
+            if emb is None:
+                if not getattr(openai, "api_key", None):
+                    raise RuntimeError("OpenAI API key not configured for batch embeddings")
+                emb = openai.Embedding.create(model=self.embed_model, input=text)["data"][0]["embedding"]
+            vectors.append((it["id"], emb, it.get("metadata", {})))
         self._index.upsert(vectors=vectors)
         return {"ok": True, "count": len(vectors)}
+
 
     def search(self, query: str, k: int = 3, min_score: Optional[float] = None) -> List[Dict[str, Any]]:
         """
