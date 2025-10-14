@@ -11,8 +11,8 @@ import logging
 from typing import Optional, Union
 from typing import Any, Dict, List
 
-import openai
 from pinecone import Pinecone
+from app.ai.openai_client import embed_text
 
 logger = logging.getLogger(__name__)
 
@@ -26,44 +26,39 @@ class PineconeClient:
     ):
         # Accept injected values or read from environment
         self.api_key = api_key or os.getenv("PINECONE_API_KEY")
-        self.environment = env or os.getenv("PINECONE_ENVIRONMENT")
+        self.environment = env or os.getenv("PINECONE_ENVIRONMENT")  # optional on v3
         self.index_name = index_name or os.getenv("PINECONE_INDEX_NAME", "invoice-poc")
         self.embed_model = embed_model or os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 
-        if not self.api_key or not self.environment:
-            raise ValueError("Pinecone API key and environment must be provided")
+        # v3: only API key is required; environment is optional (ignored by SDK)
+        if not self.api_key:
+            raise ValueError("Pinecone API key must be provided")
 
-        # Init OpenAI API for embeddings (embedding calls use OpenAI)
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if openai_api_key:
-            openai.api_key = openai_api_key
-        else:
-            # We do not raise here because some tests may mock embeddings or
-            # use other embedding backends. But warn for production.
+        # Check if OpenAI API key is available for embeddings
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not self.openai_api_key:
             logger.warning("OPENAI_API_KEY not set - embeddings will fail if used")
 
-        # Initialize pinecone and the index (v3 API)
+        # Initialize pinecone (v3)
         self._pc = Pinecone(api_key=self.api_key)
         try:
             self._index = self._pc.Index(self.index_name)
         except Exception as e:
-            # Re-raise with context so logs show the intended index/env
-            logger.exception("Failed to open Pinecone index '%s' in env '%s': %s",
-                             self.index_name, self.environment, e)
+            logger.exception("Failed to open Pinecone index '%s' (env=%s): %s",
+                             self.index_name, self.environment or "n/a", e)
             raise
 
-        logger.info("PineconeClient initialized for index=%s env=%s", self.index_name, self.environment)
+        logger.info("PineconeClient initialized index=%s (env=%s)", self.index_name, self.environment or "n/a")
 
     def embed_text(self, text: str) -> List[float]:
         """
         Create an embedding for the given text using OpenAI.
         Caller should handle OpenAI errors / rate limits.
         """
-        if not getattr(openai, "api_key", None):
+        if not self.openai_api_key:
             raise RuntimeError("OpenAI API key is not configured for embeddings")
 
-        resp = openai.Embedding.create(model=self.embed_model, input=text)
-        return resp["data"][0]["embedding"]
+        return embed_text(text, model=self.embed_model)
 
     def upsert(self, id: str, text: str, metadata: Dict[str, Any] | None = None, embedding: List[float] | None = None) -> Dict[str, Any]:
         """
@@ -75,9 +70,9 @@ class PineconeClient:
 
         if embedding is None:
             # Use OpenAI embedding hook (raise descriptive error if not configured)
-            if not getattr(openai, "api_key", None):
+            if not self.openai_api_key:
                 raise RuntimeError("OpenAI API key is not configured for embeddings")
-            embedding = openai.Embedding.create(model=self.embed_model, input=text)["data"][0]["embedding"]
+            embedding = self.embed_text(text)
 
         try:
             # New SDK and old SDK both support upsert(this shape)
@@ -98,9 +93,9 @@ class PineconeClient:
             text = it.get("text") or it.get("chunk_text") or ""
             emb = it.get("embedding")
             if emb is None:
-                if not getattr(openai, "api_key", None):
+                if not self.openai_api_key:
                     raise RuntimeError("OpenAI API key not configured for batch embeddings")
-                emb = openai.Embedding.create(model=self.embed_model, input=text)["data"][0]["embedding"]
+                emb = self.embed_text(text)
             vectors.append((it["id"], emb, it.get("metadata", {})))
         self._index.upsert(vectors=vectors)
         return {"ok": True, "count": len(vectors)}

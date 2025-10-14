@@ -1,33 +1,31 @@
 # scripts/test_index_upsert.py
 """
-Test script: embed a sample text using app.ai.openai_client and upsert into Pinecone client.
-Then search using the same embedding or a query embedding and print results.
+Test script: Upsert and search a sample text via our PineconeClient (which uses OpenAI embeddings under the hood).
 Run with the same environment variables you use on Render for a faithful test.
+Required envs: OPENAI_API_KEY, PINECONE_API_KEY, PINECONE_INDEX_NAME. For v2 SDK, also PINECONE_ENVIRONMENT.
 """
 import os, time, json
-from app.ai.openai_client import embed_text
 from app.storage.pinecone_client import PineconeClient
 
 def main():
     pc = PineconeClient()
-    print("Indexes available (via client):", pc.list_indexes())
+    # Describe index stats if available
+    try:
+        print("Index info:", json.dumps(pc.describe_index(), indent=2, default=str))
+    except Exception as e:
+        print("describe_index failed:", e)
 
     doc_id = "doc-CHAIRS-EMB-001"
     text = "Invoice: chairs purchase. GST 18% applied. Delivery Mumbai."
     meta = {"type":"invoice","vendor":"Acme Corp","loc":"mumbai"}
 
-    print("Embedding text via OpenAI...")
-    emb = embed_text(text)
-    print("Embedding length:", len(emb))
-
-    print("Upserting into Pinecone with provided embedding...")
-    res = pc.upsert(doc_id, text, metadata=meta, embedding=emb)
+    print("Upserting into Pinecone (will embed via OpenAI)...")
+    res = pc.upsert(doc_id, text, metadata=meta)
     print("Upsert result:", res)
 
     time.sleep(1.5)
     print("Searching for similar with query 'chairs mumbai gst'...")
-    q_emb = embed_text("chairs mumbai gst")
-    hits = pc.search(query="chairs mumbai gst", k=3)  # search computes its own embedding; alternative: extend search to accept vector
+    hits = pc.search(query="chairs mumbai gst", k=3)
     print("Search hits:", json.dumps(hits, indent=2))
 
 if __name__ == "__main__":
