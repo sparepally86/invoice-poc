@@ -270,3 +270,35 @@ def run_explain(db: Any, invoice: Dict[str, Any], triggering_step: Dict[str, Any
         agent_response["score"] = 0.5
 
     return agent_response
+
+# OpenAI SDK compatibility (v1+ and legacy 0.28)
+try:
+    from openai import OpenAI as _OpenAI
+    _OPENAI_V1 = True
+except Exception:
+    import openai as _openai
+    _OPENAI_V1 = False
+
+def _chat(model: str, messages: list, temperature: float = 0.2, timeout: int = 30) -> str:
+    if _OPENAI_V1:
+        client = _OpenAI()
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            timeout=timeout,
+        )
+        return resp.choices[0].message.content
+    else:
+        resp = _openai.ChatCompletion.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            request_timeout=timeout,
+        )
+        return resp["choices"][0]["message"]["content"]
+
+# Use _chat(...) wherever the code previously did:
+#   client = OpenAI(); client.chat.completions.create(...)
+# or:
+#   openai.ChatCompletion.create(...)
