@@ -107,8 +107,8 @@ export default function Home() {
           value={stats.invoices}
           trend={12.5}
           trendLabel="from last month"
-          iconBg="bg-blue-100"
-          iconColor="text-blue-600"
+          iconBg="bg-primary-100"
+          iconColor="text-primary-600"
         />
         <StatCard
           icon={Clock}
@@ -203,8 +203,8 @@ export default function Home() {
         <h3 className="font-semibold text-slate-900 mb-4">Quick Actions</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <a href="/invoices" className="flex items-center gap-3 p-4 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors border border-slate-200">
-            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-              <FileText className="w-5 h-5 text-blue-600" />
+            <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
+              <FileText className="w-5 h-5 text-primary-600" />
             </div>
             <div>
               <div className="font-medium text-slate-900">View Invoices</div>

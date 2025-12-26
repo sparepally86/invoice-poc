@@ -88,7 +88,7 @@ body {
   }
   
   .badge-info {
-    @apply bg-blue-100 text-blue-800;
+    @apply bg-primary-100 text-primary-800;
   }
   
   .badge-neutral {
