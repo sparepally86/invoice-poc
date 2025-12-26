@@ -90,14 +90,132 @@ def index_document(doc_id: str, text: str, metadata: Optional[Dict[str, Any]] = 
     return results
 
 
-def retrieve(query: str, k: int = 5, filter: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+def retrieve(query: str, k: int = 5, min_score: float = 0.0) -> List[Dict[str, Any]]:
     """
     Retrieve top-k similar chunks for the query using vector_client.search().
     Returns list of results with fields: id, score, excerpt, metadata.
+    
+    Note: Different vector clients have different search signatures:
+    - InMemoryVectorClient: search(query, k, filter)
+    - PineconeClient: search(query, k, min_score)
     """
     vc = get_vector_client()
-    results = vc.search(query, k=k, filter=filter)
+    try:
+        results = vc.search(query, k=k, min_score=min_score)
+    except TypeError:
+        results = vc.search(query, k=k)
     return results
+
+
+def _invoice_to_query_text(invoice: Dict[str, Any]) -> str:
+    """
+    Convert invoice JSON to a query string for retrieval.
+    Extracts key fields to create a meaningful search query.
+    """
+    parts = []
+    header = invoice.get("header", {}) or {}
+    
+    invoice_ref = header.get("invoice_ref") or header.get("invoice_number") or invoice.get("_id")
+    if invoice_ref:
+        parts.append(str(invoice_ref))
+    
+    vendor = header.get("vendor") or header.get("vendor_name") or header.get("supplier")
+    if vendor:
+        parts.append(f"vendor:{vendor}")
+    
+    amount = header.get("amount") or header.get("total") or header.get("invoice_amount")
+    if amount:
+        parts.append(f"amount:{amount}")
+    
+    po_number = header.get("po_number") or header.get("po") or header.get("po_reference")
+    if po_number:
+        parts.append(f"PO:{po_number}")
+    
+    lines = invoice.get("lines") or invoice.get("items") or []
+    if isinstance(lines, list) and len(lines) > 0:
+        first = lines[0]
+        if isinstance(first, dict):
+            desc = first.get("description") or first.get("desc") or ""
+            if desc:
+                parts.append(str(desc)[:100])
+    
+    query = " ".join([p for p in parts if p]).strip()
+    if not query:
+        query = str(invoice.get("_id", "invoice"))
+    return query[:1000]
+
+
+def _normalize_hit(hit: Dict[str, Any], min_score: float = 0.0) -> Optional[Dict[str, Any]]:
+    """
+    Normalize a retrieval hit to the expected output format:
+    {
+        id,
+        score,
+        metadata: {
+            type,          // "invoice" | "feedback" | "doc"
+            source_id,
+            text_preview
+        }
+    }
+    """
+    score = hit.get("score", 0.0)
+    if score < min_score:
+        return None
+    
+    raw_metadata = hit.get("metadata", {}) or {}
+    
+    doc_type = raw_metadata.get("type") or raw_metadata.get("doc_type") or "doc"
+    source_id = raw_metadata.get("source_id") or raw_metadata.get("parent_id") or hit.get("id", "")
+    text_preview = (
+        raw_metadata.get("text_preview") or 
+        raw_metadata.get("chunk_text_preview") or 
+        hit.get("excerpt", "")
+    )
+    if len(text_preview) > 200:
+        text_preview = text_preview[:200] + "..."
+    
+    return {
+        "id": hit.get("id", ""),
+        "score": score,
+        "metadata": {
+            "type": doc_type,
+            "source_id": source_id,
+            "text_preview": text_preview
+        }
+    }
+
+
+def search_invoice(invoice: Dict[str, Any], k: int = 5, min_score: float = 0.0) -> List[Dict[str, Any]]:
+    """
+    Search for similar documents based on the invoice content.
+    
+    Args:
+        invoice: Full invoice JSON document
+        k: Number of results to return (default 5)
+        min_score: Minimum score threshold for results (default 0.0)
+    
+    Returns:
+        List of hits with normalized format:
+        {
+            id,
+            score,
+            metadata: {
+                type,          // "invoice" | "feedback" | "doc"
+                source_id,
+                text_preview
+            }
+        }
+    """
+    query = _invoice_to_query_text(invoice)
+    raw_results = retrieve(query, k=k, min_score=min_score)
+    
+    normalized = []
+    for hit in raw_results:
+        norm = _normalize_hit(hit, min_score=min_score)
+        if norm:
+            normalized.append(norm)
+    
+    return normalized
 
 
 def reindex_documents(docs: Iterable[Tuple[str, str, Optional[Dict[str, Any]]]],

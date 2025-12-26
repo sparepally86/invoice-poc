@@ -50,3 +50,7 @@ LLM_RATE_LIMIT_CAPACITY = int(_getenv("LLM_RATE_LIMIT_CAPACITY", "60"))
 
 # Deployment env
 DEPLOY_ENV = _getenv("DEPLOY_ENV", "development")
+
+# RAG configuration for ExplainAgent
+RAG_ENABLED = _getenv("RAG_ENABLED", "true").lower() in ("1", "true", "yes")
+RETRIEVAL_K_DEFAULT = int(_getenv("RETRIEVAL_K_DEFAULT", "3"))
