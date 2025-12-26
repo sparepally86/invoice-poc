@@ -1,11 +1,21 @@
-// frontend/src/pages/SubmitInvoice.jsx
 import React, { useEffect, useState, useRef } from "react";
+import { Upload, Trash2, Shuffle, Send, CheckCircle, XCircle, Clock, AlertCircle, Zap, GitBranch, FileText, Wifi, WifiOff } from "lucide-react";
 
 const BACKEND = (import.meta.env.VITE_BACKEND_URL || "").replace(/\/$/, "") || "https://invoice-poc-1gpt.onrender.com";
 
-/**
- * Inline InvoiceJourney component — listens to SSE and renders steps.
- */
+const STATUS_ICONS = {
+  RECEIVED: { icon: FileText, color: "text-slate-600 bg-slate-100" },
+  VALIDATED: { icon: CheckCircle, color: "text-blue-600 bg-blue-100" },
+  MATCHED: { icon: Zap, color: "text-emerald-600 bg-emerald-100" },
+  EXCEPTION: { icon: XCircle, color: "text-red-600 bg-red-100" },
+  needs_human: { icon: AlertCircle, color: "text-amber-600 bg-amber-100" },
+  APPROVAL_PENDING: { icon: Clock, color: "text-amber-600 bg-amber-100" },
+  APPROVED: { icon: CheckCircle, color: "text-emerald-600 bg-emerald-100" },
+  REJECTED: { icon: XCircle, color: "text-red-600 bg-red-100" },
+  POSTED: { icon: CheckCircle, color: "text-green-600 bg-green-100" },
+  UNKNOWN: { icon: AlertCircle, color: "text-slate-600 bg-slate-100" },
+};
+
 function InvoiceJourney({ invoiceId }) {
   const [steps, setSteps] = useState([]);
   const [status, setStatus] = useState(null);
@@ -13,23 +23,9 @@ function InvoiceJourney({ invoiceId }) {
   const esRef = useRef(null);
   const containerRef = useRef(null);
 
-  const STATUS_EMOJI = {
-    RECEIVED: "📥",
-    VALIDATED: "✅",
-    MATCHED: "🔗",
-    EXCEPTION: "❌",
-    needs_human: "🧑‍🤝‍🧑",
-    APPROVAL_PENDING: "⏳",
-    APPROVED: "🎉",
-    REJECTED: "😞",
-    POSTED: "🚀",
-    UNKNOWN: "🔔",
-  };
-
   useEffect(() => {
     if (!invoiceId) return;
 
-    // close any previous ES
     if (esRef.current) {
       try { esRef.current.close(); } catch (e) {}
       esRef.current = null;
@@ -82,7 +78,6 @@ function InvoiceJourney({ invoiceId }) {
     };
   }, [invoiceId]);
 
-  // auto-scroll when steps change
   useEffect(() => {
     const node = containerRef.current;
     if (node) {
@@ -93,133 +88,76 @@ function InvoiceJourney({ invoiceId }) {
   function renderStep(s, idx) {
     const label = s.agent || s.type || s.result?.agent || "step";
     const t = s.status || (s.type === "status_change" && s.to) || s.result?.status || "UNKNOWN";
-    const emoji = STATUS_EMOJI[t] || STATUS_EMOJI.UNKNOWN;
+    const statusConfig = STATUS_ICONS[t] || STATUS_ICONS.UNKNOWN;
+    const Icon = statusConfig.icon;
     const ts = s.timestamp || s.created_at || "";
     const short = s.note || s.result?.summary || (s.result?.issues && s.result.issues.length ? s.result.issues.map(i => i.code).join(", ") : "");
+    
     return (
-      <div key={idx} style={{ 
-        display: "flex", 
-        gap: 16, 
-        alignItems: "flex-start", 
-        padding: "12px 0", 
-        borderBottom: "1px solid var(--secondary-200)"
-      }}>
-        <div style={{ 
-          fontSize: 24, 
-          width: 40, 
-          height: 40,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "var(--secondary-100)",
-          borderRadius: "8px"
-        }}>
-          {emoji}
+      <div key={idx} className="flex gap-4 py-4 border-b border-slate-100 last:border-0">
+        <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${statusConfig.color}`}>
+          <Icon className="w-5 h-5" />
         </div>
-        <div style={{ flex: 1 }}>
-          <div style={{ 
-            fontWeight: 600,
-            color: "var(--secondary-900)",
-            marginBottom: 4
-          }}>
-            {label} 
-            <span style={{ 
-              color: "var(--secondary-500)", 
-              fontSize: 12, 
-              fontWeight: 500,
-              background: "var(--secondary-100)",
-              padding: "2px 6px",
-              borderRadius: "4px",
-              marginLeft: 8
-            }}>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="font-medium text-slate-900">{label}</span>
+            <span className="px-2 py-0.5 text-xs font-medium bg-slate-100 text-slate-600 rounded">
               {t}
             </span>
           </div>
           {short && (
-            <div style={{ 
-              color: "var(--secondary-700)", 
-              fontSize: 14,
-              marginBottom: 4,
-              lineHeight: 1.4
-            }}>
-              {short}
-            </div>
+            <p className="text-sm text-slate-600 mb-1">{short}</p>
           )}
           {ts && (
-            <div style={{ 
-              color: "var(--secondary-500)", 
-              fontSize: 12
-            }}>
-              {ts}
-            </div>
+            <p className="text-xs text-slate-400">{ts}</p>
           )}
         </div>
       </div>
     );
   }
 
+  const currentStatusConfig = STATUS_ICONS[status] || STATUS_ICONS.UNKNOWN;
+  const CurrentIcon = currentStatusConfig.icon;
+
   return (
-    <div className="card">
-      <div className="card-header">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h3 className="card-title">📊 Invoice Journey</h3>
-          <div style={{ 
-            fontSize: 12, 
-            fontWeight: 600,
-            color: connected ? "var(--success-700)" : "var(--error-700)",
-            background: connected ? "var(--success-100)" : "var(--error-100)",
-            padding: "4px 8px",
-            borderRadius: "4px"
-          }}>
-            {connected ? "🟢 Live" : "🔴 Disconnected"}
-          </div>
+    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <GitBranch className="w-5 h-5 text-slate-400" />
+          <h3 className="font-semibold text-slate-900">Invoice Journey</h3>
+        </div>
+        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium ${
+          connected ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"
+        }`}>
+          {connected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+          {connected ? "Live" : "Disconnected"}
         </div>
       </div>
 
-      <div className="card-body" style={{ padding: 0 }}>
-        <div style={{ 
-          padding: "16px 24px",
-          borderBottom: "1px solid var(--secondary-200)",
-          background: "var(--secondary-50)"
-        }}>
-          <strong>Current Status: </strong> 
-          <span style={{
-            color: "var(--secondary-800)",
-            background: "var(--secondary-200)",
-            padding: "4px 8px",
-            borderRadius: "4px",
-            fontSize: 14,
-            fontWeight: 500
-          }}>
-            {status || "N/A"} {STATUS_EMOJI[status] || STATUS_EMOJI.UNKNOWN}
-          </span>
-        </div>
+      <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center gap-3">
+        <span className="text-sm text-slate-600">Current Status:</span>
+        <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium ${currentStatusConfig.color}`}>
+          <CurrentIcon className="w-4 h-4" />
+          {status || "N/A"}
+        </span>
+      </div>
 
-        <div ref={containerRef} style={{ 
-          maxHeight: 420, 
-          overflowY: "auto",
-          padding: "0 24px"
-        }}>
-          {steps.length === 0 && (
-            <div style={{ 
-              color: "var(--secondary-500)",
-              textAlign: "center",
-              padding: 32,
-              fontStyle: "italic"
-            }}>
-              No steps yet — submit invoice to start processing.
-            </div>
-          )}
-          {steps.map((s, i) => renderStep(s, i))}
-          {steps.length > 0 && <div style={{ height: 16 }}></div>}
-        </div>
+      <div ref={containerRef} className="max-h-96 overflow-y-auto px-6">
+        {steps.length === 0 ? (
+          <div className="py-12 text-center text-slate-500">
+            <FileText className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+            <p>No steps yet</p>
+            <p className="text-sm">Submit an invoice to start processing</p>
+          </div>
+        ) : (
+          steps.map((s, i) => renderStep(s, i))
+        )}
       </div>
     </div>
   );
 }
 
 
-/* ------- Main SubmitInvoice page component ------- */
 export default function SubmitInvoice() {
   const [mode, setMode] = useState("po");
   const [splitLineItem, setSplitLineItem] = useState(true);
@@ -256,7 +194,7 @@ export default function SubmitInvoice() {
       const resp = await fetch(url, { method: "POST" });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        setStatusMsg(`Generator error: ${JSON.stringify(data)}`);
+        setStatusMsg({ type: "error", text: `Generator error: ${JSON.stringify(data)}` });
         setLoadingGen(false);
         return;
       }
@@ -288,10 +226,10 @@ export default function SubmitInvoice() {
       }
 
       setJsonText(JSON.stringify(mutated, null, 2));
-      setStatusMsg(`Generated invoice (${mode === "po" ? "PO-based" : "Non-PO"})`);
+      setStatusMsg({ type: "success", text: `Generated invoice (${mode === "po" ? "PO-based" : "Non-PO"})` });
     } catch (err) {
       console.error(err);
-      setStatusMsg(`Error generating invoice: ${err?.message || JSON.stringify(err)}`);
+      setStatusMsg({ type: "error", text: `Error generating invoice: ${err?.message || JSON.stringify(err)}` });
     } finally {
       setLoadingGen(false);
     }
@@ -312,135 +250,168 @@ export default function SubmitInvoice() {
 
       const resp = await r.json().catch(() => ({}));
       if (!r.ok) {
-        setStatusMsg(`Submit error: ${JSON.stringify(resp)}`);
+        setStatusMsg({ type: "error", text: `Submit error: ${JSON.stringify(resp)}` });
       } else {
         const invoiceId = resp.invoice_id || resp._id || resp.id || (json && json._id) || null;
         if (invoiceId) {
           setLastInvoiceId(invoiceId);
-          setStatusMsg(`Submitted — invoice_id: ${invoiceId}`);
+          setStatusMsg({ type: "success", text: `Submitted — invoice_id: ${invoiceId}` });
         } else {
-          setStatusMsg(`Submitted — response: ${JSON.stringify(resp)}`);
+          setStatusMsg({ type: "success", text: `Submitted — response: ${JSON.stringify(resp)}` });
         }
       }
     } catch (err) {
       console.error(err);
-      setStatusMsg("Submit error: " + (err?.message || JSON.stringify(err)));
+      setStatusMsg({ type: "error", text: "Submit error: " + (err?.message || JSON.stringify(err)) });
     } finally {
       setLoadingSubmit(false);
     }
   }
 
   return (
-    <div style={{ display: "flex", gap: 32, alignItems: "flex-start" }}>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {/* LEFT: Generate + Submit panel */}
-      <div style={{ flex: 1, maxWidth: "50%", minWidth: 460 }}>
-        <div className="card">
-          <div className="card-header">
-            <h2 className="card-title">📤 Submit Invoice</h2>
+      <div className="space-y-6">
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
+            <Upload className="w-5 h-5 text-slate-400" />
+            <h3 className="font-semibold text-slate-900">Submit Invoice</h3>
           </div>
-          <div className="card-body">
-            <div className="form-group">
-              <div className="form-label">Invoice Type</div>
-              <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>
-                <label style={{ 
-                  display: "flex", 
-                  gap: 8, 
-                  alignItems: "center",
-                  padding: "8px 12px",
-                  background: mode === "po" ? "var(--primary-100)" : "var(--secondary-100)",
-                  borderRadius: "6px",
-                  cursor: "pointer",
-                  border: `2px solid ${mode === "po" ? "var(--primary-300)" : "transparent"}`
-                }}>
-                  <input type="radio" name="mode" value="po" checked={mode === "po"} onChange={() => setMode("po")} />
-                  PO-based
+          
+          <div className="p-6 space-y-6">
+            {/* Invoice Type */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-3">Invoice Type</label>
+              <div className="flex gap-4">
+                <label className={`flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer border-2 transition-colors ${
+                  mode === "po" ? "border-primary-500 bg-primary-50" : "border-slate-200 hover:border-slate-300"
+                }`}>
+                  <input
+                    type="radio"
+                    name="mode"
+                    value="po"
+                    checked={mode === "po"}
+                    onChange={() => setMode("po")}
+                    className="w-4 h-4 text-primary-600"
+                  />
+                  <span className="text-sm font-medium text-slate-700">PO-based</span>
                 </label>
-
-                <label style={{ 
-                  display: "flex", 
-                  gap: 8, 
-                  alignItems: "center",
-                  padding: "8px 12px",
-                  background: mode === "nonpo" ? "var(--primary-100)" : "var(--secondary-100)",
-                  borderRadius: "6px",
-                  cursor: "pointer",
-                  border: `2px solid ${mode === "nonpo" ? "var(--primary-300)" : "transparent"}`
-                }}>
-                  <input type="radio" name="mode" value="nonpo" checked={mode === "nonpo"} onChange={() => setMode("nonpo")} />
-                  Non-PO based
+                <label className={`flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer border-2 transition-colors ${
+                  mode === "nonpo" ? "border-primary-500 bg-primary-50" : "border-slate-200 hover:border-slate-300"
+                }`}>
+                  <input
+                    type="radio"
+                    name="mode"
+                    value="nonpo"
+                    checked={mode === "nonpo"}
+                    onChange={() => setMode("nonpo")}
+                    className="w-4 h-4 text-primary-600"
+                  />
+                  <span className="text-sm font-medium text-slate-700">Non-PO based</span>
                 </label>
               </div>
             </div>
 
-            <div className="form-group">
-              <div className="form-label">Options</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={splitLineItem} onChange={(e) => setSplitLineItem(e.target.checked)} />
-                  Split line item
+            {/* Options */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-3">Options</label>
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={splitLineItem}
+                    onChange={(e) => setSplitLineItem(e.target.checked)}
+                    className="w-4 h-4 text-primary-600 rounded"
+                  />
+                  <span className="text-sm text-slate-600">Split line item</span>
                 </label>
-
-                <button 
-                  onClick={handleGenerate} 
-                  disabled={loadingGen} 
-                  className="btn btn-secondary"
-                  style={{ marginLeft: "auto" }}
+                <button
+                  onClick={handleGenerate}
+                  disabled={loadingGen}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 disabled:opacity-50 transition-colors"
                 >
-                  {loadingGen ? "Generating..." : "🎲 Generate"}
+                  <Shuffle className="w-4 h-4" />
+                  {loadingGen ? "Generating..." : "Generate"}
                 </button>
               </div>
             </div>
 
-            <div className="form-group">
-              <div className="form-label">Test Scenarios</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={missMandatory} onChange={(e) => setMissMandatory(e.target.checked)} />
-                  Miss mandatory field
+            {/* Test Scenarios */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-3">Test Scenarios</label>
+              <div className="flex flex-wrap gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={missMandatory}
+                    onChange={(e) => setMissMandatory(e.target.checked)}
+                    className="w-4 h-4 text-primary-600 rounded"
+                  />
+                  <span className="text-sm text-slate-600">Miss mandatory field</span>
                 </label>
-
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={badVendor} onChange={(e) => setBadVendor(e.target.checked)} />
-                  Bad vendor
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={badVendor}
+                    onChange={(e) => setBadVendor(e.target.checked)}
+                    className="w-4 h-4 text-primary-600 rounded"
+                  />
+                  <span className="text-sm text-slate-600">Bad vendor</span>
                 </label>
-
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={badPO} onChange={(e) => setBadPO(e.target.checked)} />
-                  Bad PO match
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={badPO}
+                    onChange={(e) => setBadPO(e.target.checked)}
+                    className="w-4 h-4 text-primary-600 rounded"
+                  />
+                  <span className="text-sm text-slate-600">Bad PO match</span>
                 </label>
               </div>
             </div>
 
-            <div className="form-group">
-              <div className="form-label">Invoice JSON</div>
+            {/* Invoice JSON */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-3">Invoice JSON</label>
               <textarea
-                rows={16}
+                rows={14}
                 value={jsonText}
                 onChange={(e) => setJsonText(e.target.value)}
-                className="form-textarea"
+                className="w-full px-4 py-3 text-sm font-mono bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
+                placeholder="Enter invoice JSON..."
               />
             </div>
 
-            <div className="flex gap-4 items-center">
-              <button 
-                onClick={handleSubmitInvoice} 
-                disabled={loadingSubmit} 
-                className="btn btn-primary"
-              >
-                {loadingSubmit ? "Submitting..." : "🚀 Submit Invoice"}
-              </button>
-
+            {/* Actions */}
+            <div className="flex items-center gap-3">
               <button
-                onClick={() => { setJsonText("{}"); setStatusMsg("Cleared"); setLastInvoiceId(null); }}
-                className="btn btn-secondary"
+                onClick={handleSubmitInvoice}
+                disabled={loadingSubmit}
+                className="inline-flex items-center gap-2 px-6 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
               >
-                🗑️ Clear
+                <Send className="w-4 h-4" />
+                {loadingSubmit ? "Submitting..." : "Submit Invoice"}
+              </button>
+              <button
+                onClick={() => { setJsonText("{}"); setStatusMsg({ type: "info", text: "Cleared" }); setLastInvoiceId(null); }}
+                className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                Clear
               </button>
             </div>
 
+            {/* Status Message */}
             {statusMsg && (
-              <div className={`alert ${statusMsg.startsWith("Error") || statusMsg.includes("error") ? "alert-error" : "alert-success"}`}>
-                {statusMsg}
+              <div className={`flex items-center gap-3 px-4 py-3 rounded-lg ${
+                statusMsg.type === "error" ? "bg-red-50 border border-red-200 text-red-700" :
+                statusMsg.type === "success" ? "bg-emerald-50 border border-emerald-200 text-emerald-700" :
+                "bg-slate-50 border border-slate-200 text-slate-700"
+              }`}>
+                {statusMsg.type === "error" ? <XCircle className="w-5 h-5" /> :
+                 statusMsg.type === "success" ? <CheckCircle className="w-5 h-5" /> :
+                 <AlertCircle className="w-5 h-5" />}
+                <span className="text-sm">{statusMsg.text}</span>
               </div>
             )}
           </div>
@@ -448,15 +419,19 @@ export default function SubmitInvoice() {
       </div>
 
       {/* RIGHT: Live Journey */}
-      <div style={{ flex: 1, maxWidth: "50%", minWidth: 460, position: "sticky", top: 20 }}>
+      <div className="lg:sticky lg:top-6">
         {lastInvoiceId ? (
           <InvoiceJourney invoiceId={lastInvoiceId} />
         ) : (
-          <div className="card">
-            <div className="card-body text-center" style={{ padding: 48 }}>
-              <div style={{ fontSize: 48, marginBottom: 16 }}>🧾</div>
-              <h3 style={{ color: "var(--secondary-600)", margin: 0 }}>Invoice Journey</h3>
-              <p style={{ color: "var(--secondary-500)", margin: "8px 0 0 0" }}>
+          <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
+              <GitBranch className="w-5 h-5 text-slate-400" />
+              <h3 className="font-semibold text-slate-900">Invoice Journey</h3>
+            </div>
+            <div className="p-12 text-center">
+              <FileText className="w-16 h-16 mx-auto mb-4 text-slate-200" />
+              <h4 className="font-medium text-slate-700 mb-2">No Invoice Submitted</h4>
+              <p className="text-sm text-slate-500">
                 Generate and submit an invoice to view its live processing journey here.
               </p>
             </div>
