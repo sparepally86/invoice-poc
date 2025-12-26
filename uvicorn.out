@@ -1,0 +1,5 @@
+2025-12-26 23:09:55 | INFO     | app.logging_config | Logging configured: level=INFO
+2025-12-26 23:09:56 | INFO     | app.main | Starting Invoice POC Agentic application
+2025-12-26 23:09:56 | INFO     | app.main | Startup: Initializing orchestrator worker...
+2025-12-26 23:09:56 | INFO     | app.orchestrator | Orchestrator worker started
+2025-12-26 23:09:56 | INFO     | app.main | Startup: Orchestrator worker started successfully

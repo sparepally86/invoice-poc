@@ -10,6 +10,9 @@ from starlette.responses import StreamingResponse
 import json
 import asyncio
 from app.utils.normalize_invoice import ensure_minimal_structure
+from app.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -121,6 +124,29 @@ async def get_invoice(invoice_id: str):
     raise HTTPException(status_code=404, detail=f"invoice not found for id/ref: {invoice_id}")
 
 
+def _list_invoices_sync(flt: dict, limit: int):
+    """Synchronous helper to fetch invoices (intended for asyncio.to_thread)."""
+    db = get_db()
+    cursor = db.invoices.find(flt).sort("created_at", -1).limit(int(limit))
+    docs = []
+    for d in cursor:
+        # Convert ObjectId to string if present
+        if isinstance(d.get("_id"), ObjectId):
+            d["_id"] = str(d["_id"])
+        # sanitize other non-serializable fields if needed (datetimes usually are iso strings already)
+        # Keep only lightweight view to speed up UI
+        item = {
+            "_id": d.get("_id"),
+            "header": d.get("header", {}),
+            "status": d.get("status"),
+            "_workflow": {"steps": d.get("_workflow", {}).get("steps", [])[-3:]},  # keep last 3 steps
+            "created_at": d.get("created_at"),
+            "updated_at": d.get("updated_at"),
+        }
+        docs.append(item)
+    return docs
+
+
 @router.get("/invoices", response_class=JSONResponse)
 async def list_invoices(limit: int = Query(50, ge=1, le=1000), q: Optional[str] = Query(None)):
     """
@@ -129,7 +155,6 @@ async def list_invoices(limit: int = Query(50, ge=1, le=1000), q: Optional[str] 
     - ?q=TERM    (matches _id, header.invoice_ref, header.po_number, header.po)
     Returns: { "items": [ {..invoice..}, ... ] }
     """
-    db = get_db()
     # build filter
     flt = {}
     if q:
@@ -143,27 +168,13 @@ async def list_invoices(limit: int = Query(50, ge=1, le=1000), q: Optional[str] 
             ]
         }
 
+    logger.info("list_invoices called: limit=%s q=%s", limit, q)
     try:
-        # find and sort newest first
-        cursor = db.invoices.find(flt).sort("created_at", -1).limit(int(limit))
-        docs = []
-        for d in cursor:
-            # Convert ObjectId to string if present
-            if isinstance(d.get("_id"), ObjectId):
-                d["_id"] = str(d["_id"])
-            # sanitize other non-serializable fields if needed (datetimes usually are iso strings already)
-            # Keep only lightweight view to speed up UI
-            item = {
-                "_id": d.get("_id"),
-                "header": d.get("header", {}),
-                "status": d.get("status"),
-                "_workflow": {"steps": d.get("_workflow", {}).get("steps", [])[-3:]},  # keep last 3 steps
-                "created_at": d.get("created_at"),
-                "updated_at": d.get("updated_at"),
-            }
-            docs.append(item)
+        # Run blocking DB call in thread pool to avoid blocking the event loop
+        docs = await asyncio.to_thread(_list_invoices_sync, flt, limit)
         return JSONResponse({"items": docs})
     except Exception as e:
+        logger.exception("list_invoices failed")
         return JSONResponse({"error": "list_failed", "detail": str(e)}, status_code=500)
 
 # endpoint
