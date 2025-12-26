@@ -2,14 +2,21 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import dev_vector
-from app.api import dev_explain
-from app.api import dev_reindex_feedback, dev_retrieve
+
+# Initialize logging FIRST, before any other app imports
+from app.logging_config import setup_logging, get_logger
+setup_logging()
+logger = get_logger(__name__)
+
+from app.api import dev_vector  # noqa: E402
+from app.api import dev_explain  # noqa: E402
+from app.api import dev_reindex_feedback, dev_retrieve  # noqa: E402
 
 # Import your router module (ensure this path matches your repo)
-from app.api import invoices, masterdata, dev, tasks
-from app.api import explain, feedback
+from app.api import invoices, masterdata, dev, tasks  # noqa: E402
+from app.api import explain, feedback  # noqa: E402
 
+logger.info("Starting Invoice POC Agentic application")
 app = FastAPI(title="Invoice POC Agentic")
 
 # -------------------- CORS (HERE FIRST) --------------------
@@ -37,15 +44,19 @@ app.include_router(feedback.router, prefix="/api/v1")
 app.include_router(dev_reindex_feedback.router)
 app.include_router(dev_retrieve.router)
 
-# add to app/main.py near the bottom, after router includes
+
 @app.on_event("startup")
 async def _start_orchestrator():
-    # start the background orchestrator worker
+    """Start the background orchestrator worker on application startup."""
+    logger.info("Startup: Initializing orchestrator worker...")
     try:
         from app.orchestrator import start_worker
         start_worker(app)
-    except Exception as e:
-        print("Failed to start orchestrator:", e)
+        logger.info("Startup: Orchestrator worker started successfully")
+    except Exception:
+        # Log the full exception with traceback - this is critical for debugging
+        logger.exception("CRITICAL: Failed to start orchestrator worker - invoices will not be processed!")
+
 
 @app.get("/health")
 async def health():
