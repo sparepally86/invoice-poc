@@ -54,6 +54,11 @@ class InMemoryVectorClient:
         score = len(inter) / max(1, len(q.union(t)))
         return float(score)
 
+    def clear(self) -> None:
+        """Clear all documents from the store (for testing)."""
+        with _lock:
+            self._store.clear()
+
     def search(self, query: str, k: int = 5, filter: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Return top-k documents with deterministic score ordering.

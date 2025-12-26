@@ -165,7 +165,12 @@ def _normalize_hit(hit: Dict[str, Any], min_score: float = 0.0) -> Optional[Dict
     raw_metadata = hit.get("metadata", {}) or {}
     
     doc_type = raw_metadata.get("type") or raw_metadata.get("doc_type") or "doc"
-    source_id = raw_metadata.get("source_id") or raw_metadata.get("parent_id") or hit.get("id", "")
+    source_id = (
+        raw_metadata.get("source_id") or 
+        raw_metadata.get("source_invoice") or
+        raw_metadata.get("parent_id") or 
+        hit.get("id", "")
+    )
     text_preview = (
         raw_metadata.get("text_preview") or 
         raw_metadata.get("chunk_text_preview") or 

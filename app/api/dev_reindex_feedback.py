@@ -39,15 +39,36 @@ async def dev_reindex_feedback(limit: Optional[int] = Query(None), dry_run: Opti
                 if s.get("agent") == "ExplainAgent":
                     explain_step = s
                     break
-        text_parts = []
+        # Build concise, keyword-rich text for vectorization
+        parts = []
         inv_ref = (invoice.get("header", {}) or {}).get("invoice_ref") or invoice_id
-        text_parts.append(f"Invoice: {inv_ref}")
-        if explain_step and explain_step.get("result"):
-            text_parts.append(f"Explanation: {explain_step.get('result', {}).get('explanation')}")
-        text_parts.append(f"Feedback: {fb.get('verdict')} - {fb.get('notes','')}")
-        text_blob = "\n".join([p for p in text_parts if p])
+        parts.append(f"Invoice {inv_ref}")
+        
+        vendor = (invoice.get("header", {}) or {}).get("vendor")
+        if vendor:
+            parts.append(f"vendor {vendor}")
+        
+        verdict = fb.get("verdict", "")
+        notes = fb.get("notes", "").strip()
+        
+        if verdict:
+            parts.append(f"Reviewer {verdict} invoice")
+        
+        if notes:
+            notes_short = notes[:150] + ("..." if len(notes) > 150 else "")
+            parts.append(f"Note: {notes_short}")
+        
+        text_blob = " | ".join(parts)[:500]  # Concise format, hard limit 500 chars
+        
         doc_id = f"feedback::{fb.get('_id')}"
-        metadata = {"source":"feedback","invoice_id":invoice_id,"feedback_id":str(fb.get("_id")),"verdict":fb.get("verdict")}
+        metadata = {
+            "type": "feedback",
+            "source_invoice": invoice_id,
+            "verdict": verdict,
+            "text_preview": text_blob[:150],
+            "user": fb.get("user"),
+            "created_at": str(fb.get("created_at"))
+        }
         if not dry_run:
             chunks = index_document(doc_id, text_blob, metadata=metadata)
             created_chunks += len(chunks)

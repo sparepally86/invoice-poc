@@ -38,38 +38,40 @@ def iso_to_dt(s: str) -> Optional[datetime]:
 
 def build_feedback_text(invoice: dict, explain_step: dict, feedback_doc: dict) -> str:
     """
-    Construct a text blob to index for this feedback entry.
-    Include: invoice id/ref, short invoice snippet, explanation text, and reviewer notes.
+    Construct a concise, keyword-rich text blob for feedback indexing.
+    Keeps the text brief for efficient embedding.
     """
     parts = []
+    
+    # Invoice reference
     inv_ref = (invoice.get("header", {}) or {}).get("invoice_ref") or invoice.get("_id")
-    parts.append(f"Invoice: {inv_ref}")
+    parts.append(f"Invoice {inv_ref}")
 
-    # short invoice snippet (first line)
-    lines = invoice.get("lines") or invoice.get("items") or []
-    if isinstance(lines, list) and len(lines) > 0:
-        first = lines[0]
-        if isinstance(first, dict):
-            parts.append(f"Line0: {first.get('description','')}")
-        else:
-            parts.append(f"Line0: {str(first)}")
+    # Vendor (if available)
+    vendor = (invoice.get("header", {}) or {}).get("vendor") or (invoice.get("header", {}) or {}).get("vendor_name")
+    if vendor:
+        parts.append(f"vendor {vendor}")
 
-    # explanation (if available)
-    if explain_step and explain_step.get("result"):
-        expl = explain_step.get("result", {}).get("explanation") or explain_step.get("result")
-        parts.append(f"Explanation: {expl}")
-
-    # feedback
-    verdict = feedback_doc.get("verdict")
-    notes = feedback_doc.get("notes", "")
-    parts.append(f"Feedback verdict: {verdict}")
+    # Feedback verdict + notes (core information)
+    verdict = feedback_doc.get("verdict", "")
+    notes = feedback_doc.get("notes", "").strip()
+    
+    if verdict:
+        parts.append(f"Reviewer {verdict} invoice")
+    
+    # Keep notes concise (max 150 chars)
     if notes:
-        parts.append(f"Feedback notes: {notes}")
+        notes_short = notes[:150]
+        if len(notes) > 150:
+            notes_short += "..."
+        parts.append(f"Note: {notes_short}")
 
-    # include minimal metadata string
-    parts.append(f"Feedback id: {feedback_doc.get('_id')}, user: {feedback_doc.get('user')}, created_at: {feedback_doc.get('created_at')}")
-
-    return "\n".join([p for p in parts if p])
+    text = " | ".join(parts)
+    # Fallback if empty
+    if not text.strip():
+        text = f"Feedback on invoice {inv_ref}: {verdict}"
+    
+    return text[:500]  # Hard limit for embeddings efficiency
 
 def find_explain_step_for_feedback(invoice: dict, step_id: Optional[str]) -> Optional[dict]:
     """
@@ -115,10 +117,10 @@ def reindex_feedback(limit: Optional[int] = None, since: Optional[str] = None, d
         text_blob = build_feedback_text(invoice, explain_step, fb)
         doc_id = f"feedback::{fb.get('_id')}"
         meta = {
-            "source": "feedback",
-            "invoice_id": invoice_id,
-            "feedback_id": str(fb.get("_id")),
+            "type": "feedback",
+            "source_invoice": invoice_id,
             "verdict": fb.get("verdict"),
+            "text_preview": text_blob[:150],
             "user": fb.get("user"),
             "created_at": fb.get("created_at")
         }
