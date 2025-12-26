@@ -26,6 +26,7 @@ from app.ai.llm_client import get_llm_client
 from app.agents.retrieval import search_invoice
 from app.ai.llm_rate_limiter import get_rate_limiter
 from app.config import RAG_ENABLED, RETRIEVAL_K_DEFAULT, TELEMETRY_WRITE
+from app.utils.pii_redaction import redact_pii
 
 logger = logging.getLogger(__name__)
 
@@ -40,28 +41,6 @@ If evidence is insufficient, say so explicitly."""
 
 def _now_iso() -> str:
     return datetime.utcnow().isoformat() + "Z"
-
-
-# -----------------------
-# PII redaction utilities
-# -----------------------
-# This is a conservative regex-based redaction applied to prompt text before sending to LLM.
-# It is intentionally simple — improve rules and add allowlists/denylists for production.
-_EMAIL_RE = re.compile(r"([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)")
-_PHONE_RE = re.compile(r"(?<!\d)(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)?\d{6,12}(?!\d)")
-_LONG_DIGIT_RE = re.compile(r"\b\d{9,}\b")  # long runs of digits (IDs, etc.)
-_CREDITCARD_RE = re.compile(r"\b(?:\d[ -]*?){13,19}\b")  # naive cc pattern
-
-
-def redact_text(text: str) -> str:
-    if not text:
-        return text
-    s = str(text)
-    s = _EMAIL_RE.sub("[REDACTED_EMAIL]", s)
-    s = _CREDITCARD_RE.sub("[REDACTED_CC]", s)
-    s = _PHONE_RE.sub("[REDACTED_PHONE]", s)
-    s = _LONG_DIGIT_RE.sub("[REDACTED_ID]", s)
-    return s
 
 
 # -----------------------
@@ -275,8 +254,21 @@ Validation Results:
 
 Task: In 1-3 sentences, explain why the system flagged this invoice. List explicit evidence pointers (e.g., line indices, field names) and suggest a concrete action the reviewer can take to resolve it."""
     
-    prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
-    redacted_prompt = redact_text(prompt)
+    # CRITICAL: Redact PII BEFORE computing hash and before LLM call
+    # Pass invoice to redact vendor identifiers from context
+    redacted_prompt = redact_pii(prompt, invoice=invoice)
+    
+    # Compute prompt_hash on REDACTED prompt for telemetry integrity
+    prompt_hash = hashlib.sha256(redacted_prompt.encode("utf-8")).hexdigest()[:16]
+    
+    # Log redaction completion (debug level to avoid noise in production)
+    if prompt != redacted_prompt:
+        logger.debug(f"ExplainAgent: PII redacted for invoice {invoice.get('_id')}. "
+                    f"Original length: {len(prompt)}, Redacted length: {len(redacted_prompt)}, "
+                    f"Prompt hash: {prompt_hash}")
+    else:
+        logger.debug(f"ExplainAgent: No PII detected in prompt for invoice {invoice.get('_id')}. "
+                    f"Prompt hash: {prompt_hash}")
 
     # 3) Rate limiting
     rl = get_rate_limiter()
