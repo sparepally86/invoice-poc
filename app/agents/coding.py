@@ -330,14 +330,45 @@ def run_coding_nonpo(db, invoice: Dict[str, Any]) -> Dict[str, Any]:
                 invoice_id, vendor_name, gl_account
             )
 
-            # Update invoice.coding field in DB
+            # Update invoice.coding field in DB (invoice-level)
             coding_update = {
                 "coding.gl_account": gl_account,
                 "coding.source": "static_rules",
             }
+
+            # Also update each line item with coding information (both lines and items arrays)
+            lines = invoice.get("lines", []) or []
+            items = invoice.get("items", []) or []
+            
+            updated_lines = []
+            for line in lines:
+                line_copy = dict(line)
+                line_copy["coding"] = {
+                    "gl_account": gl_account,
+                    "source": "static_rules",
+                }
+                updated_lines.append(line_copy)
+
+            updated_items = []
+            for item in items:
+                item_copy = dict(item)
+                item_copy["coding"] = {
+                    "gl_account": gl_account,
+                    "source": "static_rules",
+                }
+                updated_items.append(item_copy)
+
+            # Add lines and items to the update if we have any
+            if updated_lines:
+                coding_update["lines"] = updated_lines
+            if updated_items:
+                coding_update["items"] = updated_items
+            agent_response["result"]["lines_coded"] = len(updated_lines)
+            agent_response["result"]["items_coded"] = len(updated_items)
+
             try:
                 db.invoices.update_one({"_id": invoice_id}, {"$set": coding_update})
-                logger.info("[invoice_id=%s] Updated invoice.coding with GL account", invoice_id)
+                logger.info("[invoice_id=%s] Updated invoice.coding and %d line items with GL account", invoice_id, len(updated_lines))
             except Exception as e:
                 logger.warning("[invoice_id=%s] Failed to update invoice.coding: %s", invoice_id, e)
 
