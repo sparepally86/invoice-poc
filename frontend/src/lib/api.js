@@ -2,8 +2,10 @@
 import axios from "axios";
 
 // Prefer VITE_API_BASE (matches ExplanationPanel), fallback to VITE_BACKEND_URL, then Render URL
-const RAW_BASE = (import.meta.env.VITE_API_BASE || import.meta.env.VITE_BACKEND_URL || "").replace(/\/$/, "");
-const API_BASE = RAW_BASE || "https://invoice-poc-1gpt.onrender.com";
+// Use nullish coalescing (??) so empty string is allowed (for Vite proxy to work)
+const RAW_BASE = (import.meta.env.VITE_API_BASE ?? import.meta.env.VITE_BACKEND_URL ?? "https://invoice-poc-1gpt.onrender.com")
+  .replace(/\/$/, "");
+const API_BASE = RAW_BASE;
 
 const client = axios.create({
   baseURL: API_BASE + "/api/v1",
