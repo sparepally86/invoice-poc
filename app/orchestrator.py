@@ -51,6 +51,9 @@ async def _worker_loop():
 
             # reload claimed task
             task = await asyncio.to_thread(db.tasks.find_one, {"_id": task["_id"]})
+            task_id = str(task.get("_id", "unknown"))
+            invoice_id = task.get("invoice_id", "unknown")
+            logger.info("[task_id=%s invoice_id=%s] Claimed task type=%s", task_id, invoice_id, task.get("type"))
             await process_task(task)
         except Exception:
             # log and sleep
@@ -127,10 +130,13 @@ async def process_task(task):
             return
 
         invoice_id = task.get("invoice_id")
+        task_id = str(task.get("_id", "unknown"))
         if not invoice_id:
+            logger.warning("[task_id=%s] Missing invoice_id in task", task_id)
             await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "error", "error": "missing_invoice_id"}})
             return
 
+        logger.info("[task_id=%s invoice_id=%s] Starting invoice processing", task_id, invoice_id)
         invoice = await asyncio.to_thread(db.invoices.find_one, {"_id": invoice_id})
         # normalize invoice to ensure consistent lines/items structure
         invoice = ensure_minimal_structure(invoice)
@@ -142,6 +148,7 @@ async def process_task(task):
         human_task_created = False
 
         # --- 1) Validation ---
+        logger.info("[task_id=%s invoice_id=%s] Running ValidationAgent", task_id, invoice_id)
         validation_out = await asyncio.to_thread(run_validation, db, invoice)
 
         # persist validation output into invoice document under _workflow.steps
@@ -149,6 +156,7 @@ async def process_task(task):
 
         # compute status and set via helper
         new_status = "VALIDATED" if validation_out.get("status") == "completed" else "EXCEPTION"
+        logger.info("[task_id=%s invoice_id=%s] ValidationAgent completed: status=%s", task_id, invoice_id, new_status)
         await asyncio.to_thread(update_invoice_status, db, invoice_id, new_status, "Orchestrator", note="Validation result applied")
 
         # If validation indicates human required (status not 'completed') -> create human task
@@ -185,6 +193,7 @@ async def process_task(task):
         po_number = header.get("po_number") or header.get("po") or header.get("po_reference")
 
         if po_number:
+            logger.info("[task_id=%s invoice_id=%s] Running POMatchingAgent for PO=%s", task_id, invoice_id, po_number)
             po_out = await asyncio.to_thread(run_po_matching, db, invoice)
 
             # persist PO matching result into workflow
@@ -192,6 +201,7 @@ async def process_task(task):
 
             # set status via helper
             matched_status = "MATCHED" if po_out.get("status") == "matched" else "EXCEPTION"
+            logger.info("[task_id=%s invoice_id=%s] POMatchingAgent completed: status=%s", task_id, invoice_id, matched_status)
             await asyncio.to_thread(update_invoice_status, db, invoice_id, matched_status, "Orchestrator", note="PO matching result applied")
 
             # If PO matching produced issues (partial_match), create a human_review task
@@ -225,21 +235,27 @@ async def process_task(task):
             invoice = await asyncio.to_thread(db.invoices.find_one, {"_id": invoice_id})
             invoice = ensure_minimal_structure(invoice)
             try:
+                logger.info("[task_id=%s invoice_id=%s] Running CodingAgent", task_id, invoice_id)
                 coding_out = await asyncio.to_thread(run_coding, db, invoice)
                 # persist coding agent output to workflow
                 await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": coding_out}})
 
                 coding_status = coding_out.get("status")
+                logger.info("[task_id=%s invoice_id=%s] CodingAgent completed: status=%s", task_id, invoice_id, coding_status)
                 if coding_status == "completed":
                     # mark CODED (uses centralized state helper)
                     await asyncio.to_thread(update_invoice_status, db, invoice_id, "CODED", "Orchestrator", note="Coding applied")
 
                     # --- 4) RISK & APPROVAL (run after CODED) ---
                     try:
+                        logger.info("[task_id=%s invoice_id=%s] Running RiskApprovalAgent", task_id, invoice_id)
                         invoice = await asyncio.to_thread(db.invoices.find_one, {"_id": invoice_id})
                         risk_out = await asyncio.to_thread(run_risk_and_approval, db, invoice)
                         # persist risk output
                         await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": risk_out}})
+
+                        risk_decision = risk_out.get("decision", risk_out.get("status", "unknown"))
+                        logger.info("[task_id=%s invoice_id=%s] RiskApprovalAgent completed: decision=%s", task_id, invoice_id, risk_decision)
 
                         # If risk decided auto_approve -> mark READY_FOR_POSTING
                         if risk_out.get("decision") == "auto_approve":
@@ -332,9 +348,11 @@ async def process_task(task):
         # If no early returns were triggered, mark original task done
         now = datetime.datetime.utcnow().isoformat() + "Z"
         await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "done", "finished_at": now}})
+        logger.info("[task_id=%s invoice_id=%s] Task completed successfully", task_id, invoice_id)
         return
 
     except Exception as e:
+        logger.exception("[task_id=%s invoice_id=%s] Task failed with error", task_id, invoice_id)
         # Log error into the task doc for diagnosability
         try:
             await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "error", "error": str(e)}})
