@@ -13,9 +13,8 @@ Environment variables used (or replace inline):
 """
 
 import os
-import openai
+from openai import OpenAI
 from pinecone import Pinecone, ServerlessSpec
-import json
 
 # Load .env if available (optional)
 try:
@@ -31,12 +30,13 @@ PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY") or "<REPLACE_WITH_PINECONE
 PINECONE_ENV = os.environ.get("PINECONE_ENVIRONMENT") or os.environ.get("PINECONE_ENV") or "us-east-1-aws"
 INDEX_NAME = os.environ.get("PINECONE_INDEX_NAME") or "invoice-poc"
 
-openai.api_key = OPENAI_API_KEY
+# Initialize OpenAI v1+ client
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # 1) get an example embedding to learn dimension
 example_text = "sample embedding dimension check"
-resp = openai.Embedding.create(input=example_text, model="text-embedding-3-small")
-vec = resp["data"][0]["embedding"]
+resp = openai_client.embeddings.create(input=example_text, model="text-embedding-3-small")
+vec = resp.data[0].embedding
 dim = len(vec)
 print("Embedding dimension:", dim)
 

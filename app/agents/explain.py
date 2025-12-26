@@ -15,11 +15,12 @@ import hashlib
 import json
 import re
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
+
+from openai import OpenAI as _OpenAI
 
 from app.ai.llm_client import get_llm_client
 from app.agents.retrieval import retrieve
-from app.storage.mongo_client import get_db
 from app.ai.llm_rate_limiter import get_rate_limiter
 
 AGENT_NAME = "ExplainAgent"
@@ -38,6 +39,7 @@ _EMAIL_RE = re.compile(r"([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)")
 _PHONE_RE = re.compile(r"(?<!\d)(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)?\d{6,12}(?!\d)")
 _LONG_DIGIT_RE = re.compile(r"\b\d{9,}\b")  # long runs of digits (IDs, etc.)
 _CREDITCARD_RE = re.compile(r"\b(?:\d[ -]*?){13,19}\b")  # naive cc pattern
+
 
 def redact_text(text: str) -> str:
     if not text:
@@ -271,34 +273,17 @@ def run_explain(db: Any, invoice: Dict[str, Any], triggering_step: Dict[str, Any
 
     return agent_response
 
-# OpenAI SDK compatibility (v1+ and legacy 0.28)
-try:
-    from openai import OpenAI as _OpenAI
-    _OPENAI_V1 = True
-except Exception:
-    import openai as _openai
-    _OPENAI_V1 = False
 
 def _chat(model: str, messages: list, temperature: float = 0.2, timeout: int = 30) -> str:
-    if _OPENAI_V1:
-        client = _OpenAI()
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            timeout=timeout,
-        )
-        return resp.choices[0].message.content
-    else:
-        resp = _openai.ChatCompletion.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            request_timeout=timeout,
-        )
-        return resp["choices"][0]["message"]["content"]
-
-# Use _chat(...) wherever the code previously did:
-#   client = OpenAI(); client.chat.completions.create(...)
-# or:
-#   openai.ChatCompletion.create(...)
+    """
+    Direct OpenAI chat completion helper using v1+ SDK.
+    Note: For most use cases, prefer using get_llm_client().call_llm() instead.
+    """
+    client = _OpenAI()
+    resp = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        timeout=timeout,
+    )
+    return resp.choices[0].message.content or ""
