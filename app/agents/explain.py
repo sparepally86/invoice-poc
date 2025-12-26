@@ -8,13 +8,15 @@ Behavior:
 - Redact PII from prompt
 - Enforce simple rate limit for LLM calls
 - Call the LLM with the redacted prompt
-- Estimate/capture token usage and store telemetry into db.telemetry
+- Capture token usage and latency; store telemetry into workflow step (if TELEMETRY_WRITE=true)
 - Return AgentResponse including retrieval_hits with proper metadata
 """
 
 import hashlib
 import json
 import re
+import time
+import logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
@@ -23,9 +25,12 @@ from openai import OpenAI as _OpenAI
 from app.ai.llm_client import get_llm_client
 from app.agents.retrieval import search_invoice
 from app.ai.llm_rate_limiter import get_rate_limiter
-from app.config import RAG_ENABLED, RETRIEVAL_K_DEFAULT
+from app.config import RAG_ENABLED, RETRIEVAL_K_DEFAULT, TELEMETRY_WRITE
+
+logger = logging.getLogger(__name__)
 
 AGENT_NAME = "ExplainAgent"
+TELEMETRY_ENABLED = TELEMETRY_WRITE  # Alias for clarity
 
 # RAG System message - fixed instruction for grounding explanations
 RAG_SYSTEM_MESSAGE = """You are an AP automation assistant. Explain invoice issues clearly and factually.
@@ -179,7 +184,9 @@ def _make_agent_response(
     retrieval_hits: List[Dict[str, Any]],
     prompt_hash: str,
     model: str,
-    tokens: Optional[Dict[str, int]] = None
+    tokens: Optional[Dict[str, int]] = None,
+    latency_ms: Optional[int] = None,
+    telemetry: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Build the ExplainAgent response with proper metadata structure.
@@ -190,6 +197,8 @@ def _make_agent_response(
         prompt_hash: SHA256 hash of the prompt (first 16 chars)
         model: LLM model name used
         tokens: Token usage dict with prompt/completion counts (if available)
+        latency_ms: Wall-clock latency of LLM call in milliseconds (if available)
+        telemetry: Complete telemetry dict to include in result.ai.telemetry (if TELEMETRY_WRITE=true)
     """
     now = _now_iso()
     result = {
@@ -206,6 +215,10 @@ def _make_agent_response(
     }
     if tokens:
         ai_metadata["tokens"] = tokens
+    
+    # Include telemetry in workflow step if TELEMETRY_WRITE=true
+    if TELEMETRY_ENABLED and telemetry:
+        ai_metadata["telemetry"] = telemetry
     
     agent_resp = {
         "agent": AGENT_NAME,
@@ -301,10 +314,15 @@ Task: In 1-3 sentences, explain why the system flagged this invoice. List explic
             }
         }
 
-    # 4) Call LLM
+    # 4) Call LLM with latency measurement
+    llm_start_time = time.time()
+    latency_ms = None
     try:
         llm_resp = llm.call_llm(redacted_prompt, max_tokens=300, temperature=0.0)
+        latency_ms = int((time.time() - llm_start_time) * 1000)
     except Exception as e:
+        latency_ms = int((time.time() - llm_start_time) * 1000)
+        
         try:
             telemetry = {
                 "agent": AGENT_NAME,
@@ -361,7 +379,36 @@ Task: In 1-3 sentences, explain why the system flagged this invoice. List explic
     except Exception:
         tokens = {"prompt": len(redacted_prompt) // 4, "completion": 0}
 
-    # 7) Persist telemetry to DB (best-effort)
+    # 7) Build telemetry dict for workflow step (if TELEMETRY_WRITE=true)
+    telemetry_dict: Optional[Dict[str, Any]] = None
+    if TELEMETRY_ENABLED:
+        try:
+            total_tokens = 0
+            if tokens:
+                total_tokens = tokens.get("prompt", 0) + tokens.get("completion", 0)
+            
+            telemetry_dict = {
+                "prompt_hash": prompt_hash,
+                "model": model_name,
+                "token_usage": {
+                    "prompt_tokens": tokens.get("prompt", 0) if tokens else None,
+                    "completion_tokens": tokens.get("completion", 0) if tokens else None,
+                    "total_tokens": total_tokens if tokens else None
+                },
+                "latency_ms": latency_ms,
+                "retrieval_count": len(retrieval_hits)
+            }
+            if invoice.get("_id"):
+                telemetry_dict["invoice_id"] = invoice.get("_id")
+            
+            logger.debug("ExplainAgent telemetry: prompt_hash=%s model=%s latency_ms=%s retrieval_count=%d",
+                        prompt_hash, model_name, latency_ms, len(retrieval_hits))
+        except Exception as e:
+            logger.exception("Failed to build telemetry dict: %s", str(e))
+            # Telemetry is optional; don't break if it fails
+            telemetry_dict = None
+
+    # 8) Persist telemetry to DB (best-effort, legacy location)
     try:
         telemetry = {
             "agent": AGENT_NAME,
@@ -381,9 +428,10 @@ Task: In 1-3 sentences, explain why the system flagged this invoice. List explic
     except Exception:
         pass
 
-    # 8) Build response with proper metadata
+    # 9) Build response with proper metadata including new telemetry
     agent_response = _make_agent_response(
-        explanation_text, retrieval_hits, prompt_hash, model_name, tokens=tokens
+        explanation_text, retrieval_hits, prompt_hash, model_name, 
+        tokens=tokens, latency_ms=latency_ms, telemetry=telemetry_dict
     )
     
     # Score higher if we have retrieval hits (RAG grounded)
