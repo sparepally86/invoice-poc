@@ -3,18 +3,25 @@
 Simple rule-based Coding Agent.
 
 Function: run_coding(db, invoice) -> dict (AgentResponse envelope)
+Function: run_coding_nonpo(db, invoice) -> dict (AgentResponse envelope) - for non-PO invoices
 
 Behavior:
- - Look up vendor mapping in db.vendors (if available).
+ - For PO invoices: Look up vendor mapping in db.vendors (if available).
+ - For non-PO invoices: Use static JSON rules file for deterministic vendor-name-based coding.
  - Look up buyer-companycode mapping (simple rules or DB collection).
  - For each invoice line, attempt to assign GL account, cost center, profit center.
  - Provide confidence (0..1) per line and an overall score.
  - Return a structured AgentResponse (per Agent IO schema).
 """
 
-from typing import Dict, Any, List
+import json
+import os
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 from app.agents._common import ensure_agent_response
+from app.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 AGENT_NAME = "CodingAgent"
 
@@ -201,5 +208,164 @@ def run_coding(db, invoice: Dict[str, Any]) -> Dict[str, Any]:
         agent_response["status"] = "failed"
         agent_response["errors"].append(str(e))
         agent_response["score"] = 0.0
+
+    return ensure_agent_response("CodingAgent", agent_response)
+
+
+# Path to static coding rules JSON file
+_CODING_RULES_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "coding_rules.json")
+
+# Cache for loaded rules (loaded once per process)
+_cached_rules: Optional[Dict[str, Any]] = None
+
+
+def _load_static_rules() -> Dict[str, Any]:
+    """
+    Load coding rules from static JSON file.
+    Returns empty dict if file not found or invalid.
+    Rules are cached after first load.
+    """
+    global _cached_rules
+    if _cached_rules is not None:
+        return _cached_rules
+
+    try:
+        rules_path = os.path.abspath(_CODING_RULES_PATH)
+        if os.path.exists(rules_path):
+            with open(rules_path, "r", encoding="utf-8") as f:
+                _cached_rules = json.load(f)
+                logger.info("Loaded coding rules from %s", rules_path)
+                return _cached_rules
+        else:
+            logger.warning("Coding rules file not found: %s", rules_path)
+    except json.JSONDecodeError as e:
+        logger.error("Invalid JSON in coding rules file: %s", e)
+    except Exception as e:
+        logger.error("Failed to load coding rules: %s", e)
+
+    _cached_rules = {}
+    return _cached_rules
+
+
+def _match_vendor_rule(vendor_name: Optional[str], rules: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Match vendor name against rules (case-insensitive, trimmed).
+    Returns the rule dict if matched, None otherwise.
+    """
+    if not vendor_name:
+        return None
+
+    vendor_rules = rules.get("vendor_rules", {})
+    if not vendor_rules:
+        return None
+
+    # Normalize vendor name: trim whitespace, uppercase for comparison
+    normalized_name = vendor_name.strip().upper()
+
+    for rule_vendor, rule_data in vendor_rules.items():
+        if rule_vendor.strip().upper() == normalized_name:
+            return rule_data
+
+    return None
+
+
+def run_coding_nonpo(db, invoice: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Deterministic coding for non-PO invoices using static JSON rules.
+    Matches vendor name (case-insensitive) against rules file.
+
+    Returns AgentResponse dict with:
+      - agent, invoice_id, status, result, next_agent, score, timestamp
+      - result contains: gl_account, rule_applied, matched
+
+    Updates invoice.coding field with:
+      - gl_account
+      - source = "static_rules"
+    """
+    invoice_id = invoice.get("_id") or invoice.get("header", {}).get("invoice_ref")
+    header = invoice.get("header", {}) or {}
+    vendor = invoice.get("vendor", {}) or {}
+
+    # Get vendor name from various possible locations
+    vendor_name = (
+        vendor.get("name") or
+        vendor.get("name_raw") or
+        header.get("vendor_name") or
+        header.get("vendor") or
+        ""
+    )
+
+    logger.info("[invoice_id=%s] Running CodingAgent (non-PO) for vendor: %s", invoice_id, vendor_name)
+
+    agent_response = {
+        "agent": AGENT_NAME,
+        "invoice_id": invoice_id,
+        "status": "completed",
+        "result": {
+            "gl_account": None,
+            "rule_applied": None,
+            "matched": False,
+        },
+        "next_agent": None,
+        "score": 1.0,
+        "errors": [],
+        "timestamp": _now_iso(),
+    }
+
+    try:
+        # Load static rules
+        rules = _load_static_rules()
+
+        # Try to match vendor name
+        matched_rule = _match_vendor_rule(vendor_name, rules)
+
+        if matched_rule:
+            gl_account = matched_rule.get("gl_account")
+            agent_response["result"]["gl_account"] = gl_account
+            agent_response["result"]["rule_applied"] = vendor_name.strip()
+            agent_response["result"]["matched"] = True
+            agent_response["score"] = 1.0
+            logger.info(
+                "[invoice_id=%s] Matched vendor '%s' -> GL account: %s",
+                invoice_id, vendor_name, gl_account
+            )
+
+            # Update invoice.coding field in DB
+            coding_update = {
+                "coding.gl_account": gl_account,
+                "coding.source": "static_rules",
+            }
+            try:
+                db.invoices.update_one({"_id": invoice_id}, {"$set": coding_update})
+                logger.info("[invoice_id=%s] Updated invoice.coding with GL account", invoice_id)
+            except Exception as e:
+                logger.warning("[invoice_id=%s] Failed to update invoice.coding: %s", invoice_id, e)
+
+        else:
+            # No rule matched - this is NOT a failure, just no coding applied
+            agent_response["result"]["matched"] = False
+            agent_response["result"]["note"] = f"No coding rule matched for vendor: {vendor_name}"
+            agent_response["score"] = 0.5  # Partial score since no rule matched
+            logger.info(
+                "[invoice_id=%s] No coding rule matched for vendor '%s'",
+                invoice_id, vendor_name
+            )
+
+            # Still update invoice.coding to indicate we tried
+            coding_update = {
+                "coding.gl_account": None,
+                "coding.source": "static_rules",
+                "coding.note": f"No rule matched for vendor: {vendor_name}",
+            }
+            try:
+                db.invoices.update_one({"_id": invoice_id}, {"$set": coding_update})
+            except Exception as e:
+                logger.warning("[invoice_id=%s] Failed to update invoice.coding: %s", invoice_id, e)
+
+    except Exception as e:
+        agent_response["status"] = "failed"
+        agent_response["errors"].append(str(e))
+        agent_response["score"] = 0.0
+        logger.error("[invoice_id=%s] CodingAgent (non-PO) failed: %s", invoice_id, e)
 
     return ensure_agent_response("CodingAgent", agent_response)

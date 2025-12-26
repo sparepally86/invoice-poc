@@ -1,0 +1,16 @@
+{
+  "vendor_rules": {
+    "ACME SUPPLIERS": {
+      "gl_account": "510200"
+    },
+    "OFFICE MART": {
+      "gl_account": "520100"
+    },
+    "Infosys Technologies Ltd": {
+      "gl_account": "600100"
+    },
+    "Tata Consultancy Services Ltd": {
+      "gl_account": "600200"
+    }
+  }
+}
