@@ -1,19 +1,22 @@
 # app/orchestrator.py
 import asyncio
 import datetime
-import logging
+from app.logging_config import get_logger
 from app.storage.mongo_client import get_db
-from app.agents.validation import run_validation   # adjust import path if different
-from app.agents.po_match import run_po_matching   # adjust import path if different
-from app.agents.coding import run_coding         # coding agent
-from app.agents.risk import run_risk_and_approval  # risk & approval agent
-from app.utils.state import update_invoice_status  # centralized status helper
-from app.agents.explain import run_explain #explaination agent
+from app.agents.validation import run_validation
+from app.agents.po_match import run_po_matching
+from app.agents.coding import run_coding
+from app.agents.risk import run_risk_and_approval
+from app.utils.state import update_invoice_status
+from app.agents.explain import run_explain
 from app.utils.normalize_invoice import ensure_minimal_structure
+
+logger = get_logger(__name__)
 
 _worker_task = None
 _PEAK_SLEEP = 0.8
 _IDLE_SLEEP = 1.5
+
 
 def start_worker(app):
     """Called in FastAPI startup to start background orchestrator worker."""
@@ -22,7 +25,8 @@ def start_worker(app):
         loop = asyncio.get_event_loop()
         _worker_task = loop.create_task(_worker_loop())
         app.state.orchestrator_task = _worker_task
-        print("Orchestrator worker started")
+        logger.info("Orchestrator worker started")
+
 
 async def _worker_loop():
     db = get_db()
@@ -48,10 +52,11 @@ async def _worker_loop():
             # reload claimed task
             task = await asyncio.to_thread(db.tasks.find_one, {"_id": task["_id"]})
             await process_task(task)
-        except Exception as e:
+        except Exception:
             # log and sleep
-            print("Orchestrator loop error:", repr(e))
+            logger.exception("Orchestrator loop error")
             await asyncio.sleep(3)
+
 
 def _append_explain_step_to_invoice(db, invoice_id: str, explain_step: dict):
     """
@@ -66,11 +71,7 @@ def _append_explain_step_to_invoice(db, invoice_id: str, explain_step: dict):
         db.invoices.update_one({"_id": invoice_id}, {"$push": {"_workflow.steps": explain_step}})
     except Exception:
         # non-fatal: log but do not break orchestrator
-        try:
-            import logging
-            logging.exception("Failed to persist ExplainAgent step for invoice %s", invoice_id)
-        except Exception:
-            pass
+        logger.exception("Failed to persist ExplainAgent step for invoice %s", invoice_id)
 
 
 def _safe_run_explain_and_persist(db, invoice_id: str, invoice_snapshot: dict, trigger_step: dict) -> bool:
@@ -86,9 +87,9 @@ def _safe_run_explain_and_persist(db, invoice_id: str, invoice_snapshot: dict, t
             db.invoices.update_one({"_id": invoice_id}, {"$push": {"_workflow.steps": explain_resp}})
             return True
         else:
-            logging.error("run_explain returned non-dict for invoice %s: %s", invoice_id, type(explain_resp))
+            logger.error("run_explain returned non-dict for invoice %s: %s", invoice_id, type(explain_resp))
     except Exception as e:
-        logging.exception("ExplainAgent failed for invoice %s: %s", invoice_id, str(e))
+        logger.exception("ExplainAgent failed for invoice %s: %s", invoice_id, str(e))
         err_step = {
             "agent": "ExplainAgent",
             "invoice_id": invoice_id,
@@ -100,7 +101,7 @@ def _safe_run_explain_and_persist(db, invoice_id: str, invoice_snapshot: dict, t
             db.invoices.update_one({"_id": invoice_id}, {"$push": {"_workflow.steps": err_step}})
         except Exception:
             # Last resort: at least log it
-            logging.exception("Failed to persist ExplainAgent error step for invoice %s", invoice_id)
+            logger.exception("Failed to persist ExplainAgent error step for invoice %s", invoice_id)
     return False
 
 
