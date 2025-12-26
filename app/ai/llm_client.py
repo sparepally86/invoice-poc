@@ -9,6 +9,7 @@ from app.config import LLM_PROVIDER, OPENAI_API_KEY, OPENAI_API_BASE, LOCAL_LLM_
 
 logger = logging.getLogger(__name__)
 
+
 class LLMClient:
     """
     Minimal LLM wrapper with a 'noop' provider for local tests and a
@@ -39,22 +40,19 @@ class LLMClient:
             logger.debug("LLM noop response generated")
             return resp
 
-        # OpenAI example (if you enable)
+        # OpenAI v1+ SDK
         if self.provider.lower() in ("openai", "gpt"):
             try:
-                import openai
-                openai.api_key = self.api_key
+                from openai import OpenAI
+                client = OpenAI(api_key=self.api_key)
                 messages = [{"role": "user", "content": prompt}]
-                # use ChatCompletion for structured responses; adjust per provider
-                result = openai.ChatCompletion.create(
+                result = client.chat.completions.create(
                     model=self.model,
                     messages=messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    timeout=self.timeout,
                 )
-                content = result.choices[0].message.get("content", "")
-                # attempt to parse JSON if schema expected
+                content = result.choices[0].message.content or ""
                 parsed = None
                 if schema:
                     try:
@@ -63,13 +61,20 @@ class LLMClient:
                         parsed = {"raw": content}
                 else:
                     parsed = {"raw": content}
+                usage = None
+                if result.usage:
+                    usage = {
+                        "prompt_tokens": result.usage.prompt_tokens,
+                        "completion_tokens": result.usage.completion_tokens,
+                        "total_tokens": result.usage.total_tokens,
+                    }
                 resp = {
                     "provider": "openai",
                     "model": self.model,
                     "raw": content,
                     "parsed": parsed,
                     "meta": {
-                        "usage": getattr(result, "usage", None),
+                        "usage": usage,
                         "elapsed_ms": int((time.time() - start) * 1000)
                     }
                 }
@@ -80,7 +85,7 @@ class LLMClient:
         else:
             raise NotImplementedError(f"LLM provider '{self.provider}' not implemented")
 
-# Replace the old convenience singleton/selector with a config-driven selector
+
 def get_llm_client():
     provider = (LLM_PROVIDER or "noop").lower()
     if provider == "openai":
