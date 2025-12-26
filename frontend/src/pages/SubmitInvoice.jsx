@@ -5,7 +5,7 @@ const BACKEND = (import.meta.env.VITE_BACKEND_URL || "").replace(/\/$/, "") || "
 
 const STATUS_ICONS = {
   RECEIVED: { icon: FileText, color: "text-slate-600 bg-slate-100" },
-  VALIDATED: { icon: CheckCircle, color: "text-blue-600 bg-blue-100" },
+  VALIDATED: { icon: CheckCircle, color: "text-primary-600 bg-primary-100" },
   MATCHED: { icon: Zap, color: "text-emerald-600 bg-emerald-100" },
   EXCEPTION: { icon: XCircle, color: "text-red-600 bg-red-100" },
   needs_human: { icon: AlertCircle, color: "text-amber-600 bg-amber-100" },
