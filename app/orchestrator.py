@@ -5,7 +5,7 @@ from app.logging_config import get_logger
 from app.storage.mongo_client import get_db
 from app.agents.validation import run_validation
 from app.agents.po_match import run_po_matching
-from app.agents.coding import run_coding
+from app.agents.coding import run_coding, run_coding_nonpo
 from app.agents.risk import run_risk_and_approval
 from app.utils.state import update_invoice_status
 from app.agents.explain import run_explain
@@ -324,6 +324,55 @@ async def process_task(task):
                 }
                 await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": err_step}})
                 # continue — do not block overall pipeline; leave invoice in MATCHED state
+
+        else:
+            # --- NON-PO INVOICE: Run CodingAgent with static rules ---
+            # For non-PO invoices, we run the deterministic coding agent that uses
+            # static JSON rules to assign GL accounts based on vendor name.
+            logger.info("[task_id=%s invoice_id=%s] Running CodingAgent (non-PO) for invoice without PO", task_id, invoice_id)
+            try:
+                coding_out = await asyncio.to_thread(run_coding_nonpo, db, invoice)
+                # persist coding agent output to workflow
+                await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": coding_out}})
+
+                coding_status = coding_out.get("status")
+                logger.info("[task_id=%s invoice_id=%s] CodingAgent (non-PO) completed: status=%s", task_id, invoice_id, coding_status)
+
+                # For non-PO invoices, we mark as CODED if coding completed (even if no rule matched)
+                # The invoice will still proceed to READY_FOR_POSTING
+                if coding_status == "completed":
+                    await asyncio.to_thread(update_invoice_status, db, invoice_id, "CODED", "Orchestrator", note="Non-PO coding applied")
+                elif coding_status == "failed":
+                    # Only create human task if coding actually failed (not just no match)
+                    now = datetime.datetime.utcnow().isoformat() + "Z"
+                    human_task = {
+                        "type": "human_review",
+                        "invoice_id": invoice_id,
+                        "status": "pending",
+                        "created_at": now,
+                        "payload": {
+                            "agent": coding_out.get("agent", "CodingAgent"),
+                            "agent_result": coding_out.get("result", coding_out),
+                            "reason": "coding_failed"
+                        }
+                    }
+                    await asyncio.to_thread(db.tasks.insert_one, human_task)
+                    human_task_created = True
+                    await asyncio.to_thread(update_invoice_status, db, invoice_id, "EXCEPTION", "Orchestrator", note="Non-PO coding failed - human review created")
+                    await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "done", "finished_at": now}})
+                    return
+            except Exception as e:
+                # persist a failure step so we can inspect later
+                err_step = {
+                    "agent": "CodingAgent",
+                    "invoice_id": invoice_id,
+                    "status": "failed",
+                    "result": {"error": str(e)},
+                    "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+                }
+                await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": err_step}})
+                logger.error("[task_id=%s invoice_id=%s] CodingAgent (non-PO) failed with error: %s", task_id, invoice_id, e)
+                # continue — do not block overall pipeline
 
         # At this point: either there was no PO, or PO matched + coding (if any) handled.
         # If no human tasks were created and invoice is not in an exception/pending state,

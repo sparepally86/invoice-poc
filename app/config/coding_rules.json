@@ -1,0 +1,10 @@
+{
+  "vendor_rules": {
+    "ACME SUPPLIERS": {
+      "gl_account": "510200"
+    },
+    "OFFICE MART": {
+      "gl_account": "520100"
+    }
+  }
+}
