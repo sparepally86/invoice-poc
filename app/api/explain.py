@@ -4,8 +4,12 @@ from fastapi.responses import JSONResponse
 from typing import Dict, Any, Optional
 from app.storage.mongo_client import get_db
 from app.agents.explain import run_explain
+from app.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter()
+
 
 @router.post("/invoices/{invoice_id}/explain", response_class=JSONResponse)
 async def post_explain(invoice_id: str = Path(...), payload: dict = Body({})):
@@ -25,7 +29,7 @@ async def post_explain(invoice_id: str = Path(...), payload: dict = Body({})):
             resp = await loop.run_in_executor(None, lambda: run_explain(db, inv, (payload or {}).get("triggering_step", {})))
         except Exception:
             tb = traceback.format_exc()
-            print("run_explain raised an exception:\n", tb, flush=True)
+            logger.error("run_explain raised an exception:\n%s", tb)
             return JSONResponse({"ok": False, "error": "run_explain_failed", "traceback": tb}, status_code=500)
 
         # Persist the step into invoice._workflow.steps
@@ -42,13 +46,13 @@ async def post_explain(invoice_id: str = Path(...), payload: dict = Body({})):
             await asyncio_to_thread(db.invoices.replace_one, {"_id": invoice_id}, inv)
         except Exception:
             tb = traceback.format_exc()
-            print("persist explain step failed:\n", tb, flush=True)
+            logger.error("persist explain step failed:\n%s", tb)
             return JSONResponse({"ok": True, "explain": resp, "warn": "persist_failed", "persist_traceback": tb})
 
         return JSONResponse({"ok": True, "explain": resp})
     except Exception:
         tb = traceback.format_exc()
-        print("post_explain top-level error:\n", tb, flush=True)
+        logger.error("post_explain top-level error:\n%s", tb)
         return JSONResponse({"ok": False, "error": "server_error", "traceback": tb}, status_code=500)
 
 
