@@ -242,9 +242,12 @@ async def process_task(task):
 
                 coding_status = coding_out.get("status")
                 logger.info("[task_id=%s invoice_id=%s] CodingAgent completed: status=%s", task_id, invoice_id, coding_status)
-                if coding_status == "completed":
+                if coding_status in ("completed", "partial"):
+                    # For PO-matched invoices: treat both "completed" and "partial" as non-blocking
+                    # "partial" means GL coding couldn't be fully determined, but PO already matched
+                    # This is acceptable - proceed to Risk & Approval for final decision
                     # mark CODED (uses centralized state helper)
-                    await asyncio.to_thread(update_invoice_status, db, invoice_id, "CODED", "Orchestrator", note="Coding applied")
+                    await asyncio.to_thread(update_invoice_status, db, invoice_id, "CODED", "Orchestrator", note="Coding applied (PO-matched invoice)")
 
                     # --- 4) RISK & APPROVAL (run after CODED) ---
                     try:
@@ -292,8 +295,8 @@ async def process_task(task):
                             "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
                         }
                         await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": err_step}})
-                elif coding_status in ("partial", "failed"):
-                    # create human task for coding
+                elif coding_status == "failed":
+                    # Only create human task if coding actually failed (not just partial)
                     now = datetime.datetime.utcnow().isoformat() + "Z"
                     human_task = {
                         "type": "human_review",
@@ -303,13 +306,13 @@ async def process_task(task):
                         "payload": {
                             "agent": coding_out.get("agent", "CodingAgent"),
                             "agent_result": coding_out.get("result", coding_out),
-                            "reason": "coding_partial_or_failed"
+                            "reason": "coding_failed"
                         }
                     }
                     await asyncio.to_thread(db.tasks.insert_one, human_task)
                     human_task_created = True
-                    # set invoice to EXCEPTION (or keep MATCHED and flag coding pending)
-                    await asyncio.to_thread(update_invoice_status, db, invoice_id, "EXCEPTION", "Orchestrator", note="Coding partial - human review created")
+                    # set invoice to EXCEPTION
+                    await asyncio.to_thread(update_invoice_status, db, invoice_id, "EXCEPTION", "Orchestrator", note="Coding failed - human review created")
                     # finish original processing task
                     await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "done", "finished_at": now}})
                     return
