@@ -23,6 +23,7 @@ from app.ai.llm_client import get_llm_client
 # Configurable defaults
 DEFAULT_CHUNK_SIZE = 400  # characters (simple char-based chunker for POC)
 DEFAULT_OVERLAP = 50      # characters overlap between chunks
+RELEVANCE_THRESHOLD = 0.2  # Minimum similarity score to include in evidence; below this = "no similar cases"
 
 
 def chunk_text(text: str, chunk_size: int = DEFAULT_CHUNK_SIZE, overlap: int = DEFAULT_OVERLAP) -> List[str]:
@@ -60,14 +61,10 @@ def embed_text(text: str) -> Dict[str, Any]:
     Returns a dict with an 'embedding' key for future compatibility.
     Replace this with a call to a real embedding provider (OpenAI, sentence-transformers, etc.)
     """
-    # If a provider is set to noop, produce a deterministic fingerprint.
-    client = get_llm_client()
-    provider = (client.provider or "noop").lower()
-    if provider == "noop":
-        return {"embedding": _hash_embedding_placeholder(text), "provider": "noop"}
-    # Example hook: if provider supports embeddings, call it here.
-    # For now, fallback to the hash placeholder.
-    return {"embedding": _hash_embedding_placeholder(text), "provider": provider}
+    # Deterministic placeholder embedding based on text hash
+    # This allows retrieval to work with in-memory vector store
+    embedding = _hash_embedding_placeholder(text)
+    return {"embedding": embedding, "provider": "hash-placeholder"}
 
 
 def index_document(doc_id: str, text: str, metadata: Optional[Dict[str, Any]] = None,
@@ -193,6 +190,7 @@ def _normalize_hit(hit: Dict[str, Any], min_score: float = 0.0) -> Optional[Dict
 def search_invoice(invoice: Dict[str, Any], k: int = 5, min_score: float = 0.0) -> List[Dict[str, Any]]:
     """
     Search for similar documents based on the invoice content.
+    Filters results by RELEVANCE_THRESHOLD to avoid including weak matches in evidence.
     
     Args:
         invoice: Full invoice JSON document
@@ -200,7 +198,7 @@ def search_invoice(invoice: Dict[str, Any], k: int = 5, min_score: float = 0.0) 
         min_score: Minimum score threshold for results (default 0.0)
     
     Returns:
-        List of hits with normalized format:
+        List of hits with normalized format (only those with score >= RELEVANCE_THRESHOLD):
         {
             id,
             score,
@@ -210,6 +208,10 @@ def search_invoice(invoice: Dict[str, Any], k: int = 5, min_score: float = 0.0) 
                 text_preview
             }
         }
+        
+    Note: Results below RELEVANCE_THRESHOLD are filtered out to prevent weak matches
+    from diluting explanations. This allows ExplainAgent to detect "no similar cases"
+    and provide more accurate evidence-based explanations.
     """
     query = _invoice_to_query_text(invoice)
     raw_results = retrieve(query, k=k, min_score=min_score)
@@ -217,7 +219,7 @@ def search_invoice(invoice: Dict[str, Any], k: int = 5, min_score: float = 0.0) 
     normalized = []
     for hit in raw_results:
         norm = _normalize_hit(hit, min_score=min_score)
-        if norm:
+        if norm and norm["score"] >= RELEVANCE_THRESHOLD:
             normalized.append(norm)
     
     return normalized

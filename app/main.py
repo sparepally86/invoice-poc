@@ -37,6 +37,65 @@ async def lifespan(app: FastAPI):
         logger.exception("CRITICAL: Failed to start orchestrator worker - invoices will not be processed! Error: %s", str(e))
         # Don't re-raise - allow app to continue but log the issue
     
+    # Initialize RAG with historical invoices for retrieval
+    logger.info("Startup: Initializing RAG vector store with historical invoices...")
+    try:
+        from app.storage.mongo_client import get_db
+        from app.agents.retrieval import index_document
+        
+        db = get_db()
+        # Fetch successful invoices to index
+        successful_statuses = ["READY_FOR_POSTING", "CODED", "APPROVED", "POSTED"]
+        invoices = list(db.invoices.find({"status": {"$in": successful_statuses}}).limit(20))
+        
+        indexed_count = 0
+        for inv in invoices:
+            invoice_id = inv.get("_id", "unknown")
+            header = inv.get("header", {}) or {}
+            
+            # Create indexable text
+            parts = [
+                "Invoice ID: {}".format(invoice_id),
+                "Vendor: {}".format(header.get('vendor_name', 'Unknown')),
+                "Amount: {}".format(header.get('amount', 0)),
+                "Currency: {}".format(header.get('currency', 'USD'))
+            ]
+            
+            if header.get("po_number"):
+                parts.append("PO Number: {}".format(header.get('po_number')))
+            
+            # Add line items
+            lines = inv.get("items") or inv.get("lines") or []
+            if lines:
+                parts.append("Line Items:")
+                for line in lines[:5]:
+                    item_text = line.get("item_text", "")
+                    amount = line.get("amount", 0)
+                    qty = line.get("quantity", 1)
+                    parts.append("  - {} (Qty: {}, Amount: {})".format(item_text, qty, amount))
+            
+            parts.append("Status: {}".format(inv.get('status')))
+            text = "\n".join(parts)
+            
+            # Index with metadata
+            metadata = {
+                "invoice_id": invoice_id,
+                "status": inv.get("status"),
+                "vendor": header.get("vendor_name"),
+                "amount": header.get("amount"),
+                "source": "Past invoice"
+            }
+            
+            try:
+                index_document(invoice_id, text, metadata=metadata)
+                indexed_count += 1
+            except Exception as e:
+                logger.warning("Failed to index invoice {}: {}".format(invoice_id, e))
+        
+        logger.info("Startup: RAG initialized with {} historical invoices".format(indexed_count))
+    except Exception as e:
+        logger.warning("Startup: RAG initialization skipped or partial: %s", str(e))
+    
     yield  # Application runs here
     
     # Shutdown phase (optional - cleanup resources if needed)

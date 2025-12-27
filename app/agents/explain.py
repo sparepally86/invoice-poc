@@ -107,11 +107,14 @@ def _format_retrieved_evidence(retrieval_hits: List[Dict[str, Any]], k: int = 3)
     """
     Format retrieved evidence for the RAG prompt.
     Limits to top K hits and truncates text_preview.
+    
+    If no strong similar cases are found (empty retrieval_hits list after relevance filtering),
+    returns explicit message indicating no precedent cases exist.
     """
     if not retrieval_hits:
-        return "No prior similar cases found in the knowledge base."
+        return "No prior similar cases found in the knowledge base. This appears to be a novel pattern without precedent."
     
-    parts = ["Retrieved prior cases:"]
+    parts = ["Retrieved prior cases with sufficient similarity:"]
     for hit in retrieval_hits[:k]:
         hit_id = hit.get("id", "unknown")
         score = hit.get("score", 0.0)
