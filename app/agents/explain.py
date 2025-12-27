@@ -271,12 +271,17 @@ Task: In 1-3 sentences, explain why the system flagged this invoice. List explic
                     f"Prompt hash: {prompt_hash}")
 
     # 3) Rate limiting
+    invoice_id = invoice.get("_id")
     rl = get_rate_limiter()
-    if not rl.allow_request(cost=1.0):
+    if not rl.allow_request(invoice_id=invoice_id):
+        logger.warning(
+            f"ExplainAgent: Rate limit exceeded for invoice_id={invoice_id}. "
+            f"Returning fallback explanation."
+        )
         try:
             telemetry = {
                 "agent": AGENT_NAME,
-                "invoice_id": invoice.get("_id"),
+                "invoice_id": invoice_id,
                 "prompt_hash": prompt_hash,
                 "model": model_name,
                 "event": "rate_limited",
@@ -295,14 +300,20 @@ Task: In 1-3 sentences, explain why the system flagged this invoice. List explic
         return {
             "agent": AGENT_NAME,
             "status": "rate_limited",
-            "result": {"message": "rate limit exceeded, please retry later"},
+            "result": {
+                "explanation_text": "Explanation skipped due to rate limits.",
+                "evidence": [],
+                "actions": [],
+                "sources": retrieval_hits
+            },
             "next_agent": None,
             "score": 0.0,
             "timestamp": now,
             "ai": {
                 "prompt_hash": prompt_hash,
                 "retrieval_hits": retrieval_hits,
-                "model": model_name
+                "model": model_name,
+                "rate_limited": True
             }
         }
 
@@ -318,7 +329,7 @@ Task: In 1-3 sentences, explain why the system flagged this invoice. List explic
         try:
             telemetry = {
                 "agent": AGENT_NAME,
-                "invoice_id": invoice.get("_id"),
+                "invoice_id": invoice_id,
                 "prompt_hash": prompt_hash,
                 "model": model_name,
                 "event": "llm_error",
@@ -390,8 +401,8 @@ Task: In 1-3 sentences, explain why the system flagged this invoice. List explic
                 "latency_ms": latency_ms,
                 "retrieval_count": len(retrieval_hits)
             }
-            if invoice.get("_id"):
-                telemetry_dict["invoice_id"] = invoice.get("_id")
+            if invoice_id:
+                telemetry_dict["invoice_id"] = invoice_id
             
             logger.debug("ExplainAgent telemetry: prompt_hash=%s model=%s latency_ms=%s retrieval_count=%d",
                         prompt_hash, model_name, latency_ms, len(retrieval_hits))
@@ -404,7 +415,7 @@ Task: In 1-3 sentences, explain why the system flagged this invoice. List explic
     try:
         telemetry = {
             "agent": AGENT_NAME,
-            "invoice_id": invoice.get("_id"),
+            "invoice_id": invoice_id,
             "prompt_hash": prompt_hash,
             "model": model_name,
             "tokens": tokens,

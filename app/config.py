@@ -44,9 +44,10 @@ LOCAL_LLM_MODEL = _getenv("LOCAL_LLM_MODEL", "llama2")
 # Telemetry
 TELEMETRY_WRITE = _getenv("TELEMETRY_WRITE", "true").lower() in ("1", "true", "yes")
 
-# Rate limiter
-LLM_RATE_LIMIT_PER_MINUTE = int(_getenv("LLM_RATE_LIMIT_PER_MINUTE", "60"))
-LLM_RATE_LIMIT_CAPACITY = int(_getenv("LLM_RATE_LIMIT_CAPACITY", "60"))
+# Dual-guard rate limiting for LLM calls
+# Set to 0 to disable either guard
+MAX_LLM_CALLS_PER_INVOICE = int(_getenv("MAX_LLM_CALLS_PER_INVOICE", "2"))
+MAX_LLM_CALLS_PER_MINUTE = int(_getenv("MAX_LLM_CALLS_PER_MINUTE", "30"))
 
 # Deployment env
 DEPLOY_ENV = _getenv("DEPLOY_ENV", "development")
