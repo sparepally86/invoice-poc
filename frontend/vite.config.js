@@ -11,14 +11,9 @@ export default defineConfig({
     allowedHosts: ['ap-automation-app-tunnel-fobq6juc.devinapps.com', 'localhost'],
     proxy: {
       '/api': {
-        target: 'https://codingagent-app-tunnel-m76blv1y.devinapps.com',
+        target: 'http://localhost:8000',
         changeOrigin: true,
-        secure: false,
-        configure: (proxy) => {
-          proxy.on('proxyReq', (proxyReq) => {
-            proxyReq.setHeader('Authorization', `Basic ${BACKEND_AUTH}`)
-          })
-        }
+        secure: false
       }
     }
   }

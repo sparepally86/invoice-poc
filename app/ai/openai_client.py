@@ -6,10 +6,10 @@ import json
 from typing import List, Optional, Dict, Any
 
 from openai import OpenAI
+from app.config import OPENAI_API_KEY, OPENAI_API_BASE
 
 logger = logging.getLogger(__name__)
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 
 # Initialize OpenAI v1+ client
@@ -28,7 +28,7 @@ class OpenAIClient:
 
     def __init__(self, api_key: Optional[str] = None, base: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or OPENAI_API_KEY
-        self.base_url = base
+        self.base_url = base or OPENAI_API_BASE
         self.model = model or os.getenv("LLM_MODEL", "gpt-4o")
         self._client = None
         if self.api_key:

@@ -1,9 +1,8 @@
 // src/lib/api.js
 import axios from "axios";
 
-// Prefer VITE_API_BASE (matches ExplanationPanel), fallback to VITE_BACKEND_URL, then Render URL
-// Use nullish coalescing (??) so empty string is allowed (for Vite proxy to work)
-const RAW_BASE = (import.meta.env.VITE_API_BASE ?? import.meta.env.VITE_BACKEND_URL ?? "https://invoice-poc-1gpt.onrender.com")
+// Use local backend for development, or environment variable for production
+const RAW_BASE = (import.meta.env.VITE_API_BASE ?? import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000")
   .replace(/\/$/, "");
 const API_BASE = RAW_BASE;
 

@@ -26,6 +26,15 @@ export default function InvoiceDetail() {
   const [msg, setMsg] = useState(null);
   const [showJson, setShowJson] = useState(false);
   const [activeTab, setActiveTab] = useState("details");
+  const [copyFeedback, setCopyFeedback] = useState(false);
+
+  const copyToClipboard = () => {
+    const jsonText = JSON.stringify(invoice, null, 2);
+    navigator.clipboard.writeText(jsonText).then(() => {
+      setCopyFeedback(true);
+      setTimeout(() => setCopyFeedback(false), 2000);
+    }).catch(err => console.error("Failed to copy:", err));
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -328,13 +337,24 @@ export default function InvoiceDetail() {
 
           {/* JSON Toggle */}
           <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-            <button
-              onClick={() => setShowJson(!showJson)}
-              className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-slate-50 transition-colors"
-            >
-              <span className="font-medium text-slate-700">Raw JSON Data</span>
-              {showJson ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
-            </button>
+            <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200 hover:bg-slate-50 transition-colors">
+              <button
+                onClick={() => setShowJson(!showJson)}
+                className="flex-1 flex items-center justify-between text-left"
+              >
+                <span className="font-medium text-slate-700">Raw JSON Data</span>
+                {showJson ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
+              </button>
+              {showJson && (
+                <button
+                  onClick={copyToClipboard}
+                  className="ml-3 px-3 py-1 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded transition-colors"
+                  title="Copy JSON to clipboard"
+                >
+                  {copyFeedback ? "✓ Copied!" : "Copy"}
+                </button>
+              )}
+            </div>
             {showJson && (
               <div className="px-6 pb-6">
                 <pre className="text-xs bg-slate-50 rounded-lg p-4 overflow-auto max-h-80 font-mono">

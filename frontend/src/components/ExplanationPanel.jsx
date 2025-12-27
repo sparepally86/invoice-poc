@@ -141,7 +141,7 @@ export default function ExplanationPanel({ invoiceId }) {
         <div style={{ marginTop: 8 }}>
           <div style={{ marginBottom: 8, whiteSpace: "pre-wrap" }}>
             <strong>Explanation:</strong>
-            <div style={{ marginTop: 6 }}>{explain.result && explain.result.explanation ? explain.result.explanation : String(explain)}</div>
+            <div style={{ marginTop: 6 }}>{explain.result && explain.result.explanation_text ? explain.result.explanation_text : String(explain)}</div>
           </div>
 
           {explain.result && explain.result.evidence && explain.result.evidence.length > 0 && (
