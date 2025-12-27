@@ -167,13 +167,83 @@ export default function ExplanationPanel({ invoiceId }) {
           )}
 
           {explain.ai && explain.ai.retrieval_hits && explain.ai.retrieval_hits.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <strong>Related cases</strong>
-              <ul>
-                {explain.ai.retrieval_hits.map((h, idx) => (
-                  <li key={idx}>{h.id} (score: {h.score})</li>
-                ))}
-              </ul>
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #e5e7eb" }}>
+              <strong style={{ display: "block", marginBottom: 8 }}>Related cases</strong>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {explain.ai.retrieval_hits.map((hit, idx) => {
+                  const metadata = hit.metadata || {};
+                  const typeValue = metadata.type || "doc";
+                  
+                  // Source label mapping
+                  const typeLabels = {
+                    "invoice": "Past invoice",
+                    "feedback": "Past human decision",
+                    "doc": "Reference document"
+                  };
+                  const typeLabel = typeLabels[typeValue] || typeLabels["doc"];
+                  
+                  // Confidence level based on score
+                  const getConfidenceLevel = (score) => {
+                    if (score >= 0.8) return { level: "High", color: "#10b981" };
+                    if (score >= 0.6) return { level: "Medium", color: "#f59e0b" };
+                    return { level: "Low", color: "#6b7280" };
+                  };
+                  const confidence = getConfidenceLevel(hit.score);
+                  
+                  // Truncate preview text
+                  const preview = (metadata.text_preview || "").substring(0, 120);
+                  
+                  return (
+                    <div 
+                      key={idx}
+                      style={{
+                        padding: 10,
+                        backgroundColor: "#f9fafb",
+                        border: "1px solid #e5e7eb",
+                        borderRadius: 6,
+                        fontSize: 13
+                      }}
+                    >
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                        <span 
+                          style={{
+                            display: "inline-block",
+                            padding: "3px 8px",
+                            backgroundColor: "#f3f4f6",
+                            color: "#374151",
+                            borderRadius: 4,
+                            fontSize: 11,
+                            fontWeight: 500
+                          }}
+                        >
+                          {typeLabel}
+                        </span>
+                        <span 
+                          style={{
+                            display: "inline-block",
+                            padding: "3px 8px",
+                            backgroundColor: confidence.color,
+                            color: "#fff",
+                            borderRadius: 4,
+                            fontSize: 11,
+                            fontWeight: 500
+                          }}
+                        >
+                          {confidence.level} confidence
+                        </span>
+                      </div>
+                      {preview && (
+                        <div style={{ color: "#374151", marginBottom: 6, lineHeight: 1.4 }}>
+                          {preview}
+                        </div>
+                      )}
+                      <div style={{ color: "#6b7280", fontSize: 11 }}>
+                        Score: {(hit.score * 100).toFixed(0)}%
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
