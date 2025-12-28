@@ -1,0 +1,271 @@
+{
+  "_description": "Sample invoice data demonstrating the canonical schema v1. Shows both DRAFT and RECEIVED status examples.",
+  "examples": {
+    "draft_invoice": {
+      "_description": "Minimal DRAFT invoice created by Capture POST. Returns invoice_id for subsequent PUT.",
+      "invoice": {
+        "identity": {
+          "invoice_id": 10001,
+          "tenant_id": "tenant-xyz",
+          "trace_id": "trace-abc123def456"
+        },
+        "source": {
+          "system": "CAPTURE",
+          "source_invoice_ref": "cap-req-20241228-001",
+          "received_at": "2024-12-28T10:30:00Z"
+        },
+        "status": "DRAFT",
+        "audit": {
+          "created_at": "2024-12-28T10:30:00Z",
+          "updated_at": "2024-12-28T10:30:00Z"
+        }
+      },
+      "http_request": {
+        "method": "POST",
+        "endpoint": "/invoices",
+        "description": "Capture creates a DRAFT invoice and receives invoice_id back"
+      }
+    },
+    "received_invoice_from_capture": {
+      "_description": "Full RECEIVED invoice submitted by Capture PUT using the invoice_id from DRAFT.",
+      "invoice": {
+        "identity": {
+          "invoice_id": 10001,
+          "tenant_id": "tenant-xyz",
+          "trace_id": "trace-abc123def456"
+        },
+        "source": {
+          "system": "CAPTURE",
+          "source_invoice_ref": "cap-req-20241228-001",
+          "received_at": "2024-12-28T10:35:00Z"
+        },
+        "document": {
+          "image_url": "https://storage.example.com/invoices/10001/document.pdf",
+          "raw_payload_ref": "blob://storage/invoices/10001/raw.json"
+        },
+        "header": {
+          "invoice_number": "INV-2024-12-001",
+          "invoice_date": "2024-12-27",
+          "vendor_name": "Acme Corp",
+          "vendor_number": "V-12345",
+          "currency": "EUR",
+          "total_amount": 5250.50
+        },
+        "lines": [
+          {
+            "line_number": 1,
+            "description": "Consulting services for system design",
+            "quantity": 40,
+            "unit_price": 125.00,
+            "line_amount": 5000.00
+          },
+          {
+            "line_number": 2,
+            "description": "Travel expenses",
+            "quantity": 1,
+            "unit_price": 250.50,
+            "line_amount": 250.50
+          }
+        ],
+        "status": "RECEIVED",
+        "workflow": {
+          "steps": []
+        },
+        "audit": {
+          "created_at": "2024-12-28T10:30:00Z",
+          "updated_at": "2024-12-28T10:35:00Z"
+        }
+      },
+      "http_request": {
+        "method": "PUT",
+        "endpoint": "/invoices/10001",
+        "description": "Capture submits full invoice data using the invoice_id. Now ready for orchestration."
+      }
+    },
+    "received_invoice_from_ui": {
+      "_description": "Full RECEIVED invoice manually submitted via UI.",
+      "invoice": {
+        "identity": {
+          "invoice_id": 10002,
+          "tenant_id": "tenant-xyz",
+          "trace_id": "trace-ui-202412280945"
+        },
+        "source": {
+          "system": "UI",
+          "received_at": "2024-12-28T09:45:00Z"
+        },
+        "document": {
+          "image_url": "https://storage.example.com/invoices/10002/document.pdf"
+        },
+        "header": {
+          "invoice_number": "PO-2024-0847",
+          "invoice_date": "2024-12-26",
+          "vendor_name": "Global Supplies Ltd",
+          "vendor_number": "V-98765",
+          "currency": "GBP",
+          "total_amount": 3420.00
+        },
+        "lines": [
+          {
+            "line_number": 1,
+            "description": "Office equipment and supplies",
+            "quantity": 50,
+            "unit_price": 68.40,
+            "line_amount": 3420.00
+          }
+        ],
+        "status": "RECEIVED",
+        "workflow": {
+          "steps": []
+        },
+        "audit": {
+          "created_at": "2024-12-28T09:45:00Z",
+          "updated_at": "2024-12-28T09:45:00Z"
+        }
+      },
+      "http_request": {
+        "method": "POST",
+        "endpoint": "/invoices",
+        "description": "UI submits complete invoice directly. No separate draft step."
+      }
+    },
+    "invoice_after_orchestration": {
+      "_description": "RECEIVED invoice after passing through orchestration and workflow agents.",
+      "invoice": {
+        "identity": {
+          "invoice_id": 10001,
+          "tenant_id": "tenant-xyz",
+          "trace_id": "trace-abc123def456"
+        },
+        "source": {
+          "system": "CAPTURE",
+          "source_invoice_ref": "cap-req-20241228-001",
+          "received_at": "2024-12-28T10:35:00Z"
+        },
+        "document": {
+          "image_url": "https://storage.example.com/invoices/10001/document.pdf",
+          "raw_payload_ref": "blob://storage/invoices/10001/raw.json"
+        },
+        "header": {
+          "invoice_number": "INV-2024-12-001",
+          "invoice_date": "2024-12-27",
+          "vendor_name": "Acme Corp",
+          "vendor_number": "V-12345",
+          "currency": "EUR",
+          "total_amount": 5250.50
+        },
+        "lines": [
+          {
+            "line_number": 1,
+            "description": "Consulting services for system design",
+            "quantity": 40,
+            "unit_price": 125.00,
+            "line_amount": 5000.00
+          },
+          {
+            "line_number": 2,
+            "description": "Travel expenses",
+            "quantity": 1,
+            "unit_price": 250.50,
+            "line_amount": 250.50
+          }
+        ],
+        "status": "CODED",
+        "workflow": {
+          "steps": [
+            {
+              "agent": "validation_agent",
+              "action": "validate_invoice",
+              "result": {
+                "valid": true,
+                "checks_passed": [
+                  "header_complete",
+                  "lines_present",
+                  "amounts_consistent"
+                ]
+              },
+              "timestamp": "2024-12-28T10:35:30Z"
+            },
+            {
+              "agent": "matching_agent",
+              "action": "match_purchase_order",
+              "result": {
+                "matched": true,
+                "po_number": "PO-2024-0087",
+                "variance": 0.0
+              },
+              "timestamp": "2024-12-28T10:35:45Z"
+            },
+            {
+              "agent": "coding_agent",
+              "action": "assign_accounting_codes",
+              "result": {
+                "coded": true,
+                "cost_center": "CC-500",
+                "account_code": "6000-001",
+                "lines_coded": 2
+              },
+              "timestamp": "2024-12-28T10:36:00Z"
+            }
+          ]
+        },
+        "audit": {
+          "created_at": "2024-12-28T10:30:00Z",
+          "updated_at": "2024-12-28T10:36:00Z"
+        },
+        "extensions": {
+          "ai": {
+            "confidence_scores": {
+              "vendor_extraction": 0.98,
+              "amount_extraction": 0.99,
+              "line_items_extraction": 0.95
+            },
+            "extracted_by": "ocr_v2.1"
+          },
+          "analytics": {
+            "processing_duration_seconds": 30,
+            "agent_timeline": [
+              {
+                "agent": "validation_agent",
+                "duration_ms": 150
+              },
+              {
+                "agent": "matching_agent",
+                "duration_ms": 200
+              },
+              {
+                "agent": "coding_agent",
+                "duration_ms": 350
+              }
+            ]
+          }
+        }
+      },
+      "_note": "Status has progressed to CODED. Workflow steps track agent execution. Extensions show AI confidence and analytics without polluting the core schema."
+    }
+  },
+  "validation_notes": {
+    "draft_requirements": [
+      "identity (invoice_id, tenant_id, trace_id)",
+      "source (system, received_at)",
+      "status = DRAFT",
+      "audit (created_at, updated_at)",
+      "document, header, and lines are NOT required"
+    ],
+    "received_requirements": [
+      "All DRAFT fields",
+      "document with image_url",
+      "header with invoice_number, invoice_date, vendor_name, currency, total_amount",
+      "lines array with at least 1 entry",
+      "status = RECEIVED (or progressed status)",
+      "Each line must have: line_number, description, quantity, line_amount"
+    ],
+    "capture_two_phase_flow": [
+      "1. POST /invoices with DRAFT invoice → Returns invoice_id",
+      "2. PUT /invoices/{invoice_id} with RECEIVED invoice → Triggers orchestration"
+    ],
+    "orchestration_trigger": "Orchestrator processes invoice only when status transitions to RECEIVED",
+    "workflow_steps": "System records agent execution in workflow.steps. Result objects are agent-specific.",
+    "extensions_purpose": "AI confidence, analytics, custom data — does not affect core validation"
+  }
+}
