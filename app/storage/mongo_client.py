@@ -57,3 +57,30 @@ def close_client():
     if _client:
         _client.close()
         _client = None
+
+
+def get_next_invoice_id() -> int:
+    """
+    Atomically generate the next sequential invoice_id using MongoDB counters collection.
+    
+    Uses findOneAndUpdate with upsert to ensure:
+    - Thread-safe / concurrency-safe
+    - Idempotent initialization (creates counter doc if missing)
+    - Returns monotonically increasing integers starting from 1
+    
+    Returns:
+        int: The next invoice_id (sequential, numeric, human-readable)
+    """
+    db = get_db()
+    
+    # Use findOneAndUpdate to atomically increment counter
+    # If document doesn't exist, upsert creates it with seq: 1
+    counter_doc = db.counters.find_one_and_update(
+        {"_id": "invoice"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=True  # Return updated document
+    )
+    
+    # Return the updated seq value
+    return counter_doc.get("seq", 1)

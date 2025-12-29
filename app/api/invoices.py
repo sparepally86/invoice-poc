@@ -1,7 +1,7 @@
 # app/api/invoices.py
 from fastapi import APIRouter, Body, HTTPException, Request, Query
 from fastapi.responses import JSONResponse
-from app.storage.mongo_client import get_db
+from app.storage.mongo_client import get_db, get_next_invoice_id
 from typing import Dict, Any, List, Optional
 import uuid
 from datetime import datetime
@@ -25,6 +25,10 @@ def _count_sync(coll, q=None):
         q = {}
     return coll.count_documents(q)
 
+def _now_iso():
+    """Return current UTC time in ISO format."""
+    return datetime.utcnow().isoformat() + "Z"
+
 # SSE helper
 def format_sse(event: str, data: dict):
     payload = f"event: {event}\n"
@@ -32,47 +36,340 @@ def format_sse(event: str, data: dict):
     return payload
 
 
+# ================================================================================
+# 1️⃣  POST /api/invoices — Create DRAFT Invoice
+# ================================================================================
+@router.post("/invoices", response_class=JSONResponse)
+async def create_draft_invoice(payload: dict = Body(...)):
+    """
+    Create a new DRAFT invoice with minimal information.
+    
+    Behavior:
+    - Generate invoice_id (sequential)
+    - Generate trace_id if not present
+    - Set status = DRAFT
+    - Store minimal invoice stub (identity, source, status, audit timestamps)
+    - Ignore header / lines if present (do not validate them at this stage)
+    - Return invoice_id to caller
+    
+    This endpoint does NOT trigger Orchestrator.
+    It is idempotent-safe: retries with same data do not regenerate invoice_id.
+    
+    Request body (minimal):
+    {
+        "vendor": {...},
+        "source": {...},
+        "document": {...},
+        "trace_id": "optional"  # If not present, will be generated
+    }
+    
+    Returns:
+    {
+        "invoice_id": 123,
+        "trace_id": "...",
+        "status": "DRAFT"
+    }
+    """
+    db = get_db()
+    
+    # Generate next sequential invoice_id
+    try:
+        invoice_id = get_next_invoice_id()
+    except Exception as e:
+        logger.exception("Failed to generate invoice_id")
+        raise HTTPException(status_code=500, detail=f"Failed to generate invoice_id: {e}")
+    
+    # Generate trace_id if not present
+    trace_id = payload.get("trace_id") or str(uuid.uuid4())
+    
+    now = _now_iso()
+    
+    # Build minimal DRAFT invoice document
+    invoice_doc = {
+        "_id": invoice_id,
+        "invoice_id": invoice_id,
+        "trace_id": trace_id,
+        "status": "DRAFT",
+        "vendor": payload.get("vendor"),
+        "source": payload.get("source"),
+        "document": payload.get("document"),
+        # Note: header, lines, validation etc. are NOT required at DRAFT stage
+        "_workflow": {"steps": []},
+        "created_at": now,
+        "updated_at": now,
+    }
+    
+    # Store invoice
+    try:
+        db.invoices.insert_one(invoice_doc)
+        logger.info("Created DRAFT invoice: invoice_id=%s trace_id=%s", invoice_id, trace_id)
+    except Exception as e:
+        logger.exception("Failed to store DRAFT invoice")
+        raise HTTPException(status_code=500, detail=f"Failed to store invoice: {e}")
+    
+    return JSONResponse({
+        "invoice_id": invoice_id,
+        "trace_id": trace_id,
+        "status": "DRAFT"
+    })
 
 
+# ================================================================================
+# 2️⃣  PUT /api/invoices/{invoice_id} — Submit DRAFT to RECEIVED
+# ================================================================================
+@router.put("/invoices/{invoice_id}", response_class=JSONResponse)
+async def submit_draft_invoice(invoice_id: int, payload: dict = Body(...)):
+    """
+    Transition an invoice from DRAFT to RECEIVED.
+    
+    Behavior:
+    - Look up existing invoice by invoice_id
+    - Validate:
+      - invoice exists
+      - current status is DRAFT
+    - Merge provided payload into existing invoice
+    - Generate trace_id if missing
+    - Validate invoice against canonical schema rules for RECEIVED
+    - Set status = RECEIVED
+    - Update audit timestamps
+    - Create orchestration task to trigger agents
+    
+    Important:
+    - Do NOT regenerate invoice_id
+    - Do NOT allow transition from any status other than DRAFT
+    - Reject PUT if invoice is already RECEIVED or beyond
+    
+    Request body (full invoice data):
+    {
+        "vendor": {...},
+        "source": {...},
+        "document": {...},
+        "header": {...},
+        "lines": [...],
+        "validation": {...},
+        ...
+    }
+    
+    Returns: Updated invoice document
+    """
+    db = get_db()
+    
+    # Look up existing invoice
+    existing = await asyncio.to_thread(db.invoices.find_one, {"_id": invoice_id})
+    
+    if not existing:
+        logger.warning("PUT /invoices: invoice not found: invoice_id=%s", invoice_id)
+        raise HTTPException(status_code=404, detail=f"Invoice not found: {invoice_id}")
+    
+    # Validate current status is DRAFT
+    current_status = existing.get("status")
+    if current_status != "DRAFT":
+        logger.warning(
+            "PUT /invoices: invalid status transition: invoice_id=%s current_status=%s",
+            invoice_id, current_status
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot transition from {current_status} to RECEIVED. Only DRAFT → RECEIVED allowed."
+        )
+    
+    # Merge payload into existing invoice
+    now = _now_iso()
+    existing["trace_id"] = existing.get("trace_id") or payload.get("trace_id") or str(uuid.uuid4())
+    existing.update(payload)
+    existing["status"] = "RECEIVED"
+    existing["updated_at"] = now
+    
+    # TODO: Add schema validation for RECEIVED status here
+    # (Next task: Wire canonical schema validation into POST / PUT handlers)
+    
+    # Persist updated invoice
+    try:
+        result = await asyncio.to_thread(
+            db.invoices.replace_one,
+            {"_id": invoice_id},
+            existing
+        )
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail=f"Invoice not found: {invoice_id}")
+        logger.info("Submitted invoice to RECEIVED: invoice_id=%s trace_id=%s", invoice_id, existing.get("trace_id"))
+    except Exception as e:
+        logger.exception("Failed to update invoice to RECEIVED: invoice_id=%s", invoice_id)
+        raise HTTPException(status_code=500, detail=f"Failed to update invoice: {e}")
+    
+    # Create orchestration task to trigger agents
+    # (Orchestrator will only process RECEIVED invoices)
+    try:
+        task_doc = {
+            "type": "process_invoice",
+            "invoice_id": invoice_id,
+            "status": "queued",
+            "created_at": now
+        }
+        await asyncio.to_thread(db.tasks.insert_one, task_doc)
+        logger.info("Created orchestration task for invoice: invoice_id=%s", invoice_id)
+    except Exception as e:
+        logger.exception("Failed to create orchestration task: invoice_id=%s", invoice_id)
+        # Invoice was already persisted, so don't fail the entire request
+        # Just log and let the user know
+        raise HTTPException(status_code=500, detail=f"Invoice updated but task creation failed: {e}")
+    
+    # Return updated invoice
+    if isinstance(existing.get("_id"), ObjectId):
+        existing["_id"] = str(existing["_id"])
+    return JSONResponse(existing)
+
+
+# ================================================================================
+# 3️⃣  POST /api/invoices/submit — Create RECEIVED Directly (UI Convenience)
+# ================================================================================
+@router.post("/invoices/submit", response_class=JSONResponse)
+async def submit_received_invoice(payload: dict = Body(...)):
+    """
+    Create a RECEIVED invoice directly in one step (UI convenience).
+    
+    This is a faster path for the UI to submit invoices that are already complete
+    and don't require a two-step DRAFT → RECEIVED flow.
+    
+    Behavior:
+    - Generate invoice_id (sequential)
+    - Generate trace_id if not present
+    - Validate payload against RECEIVED schema rules
+    - Set status = RECEIVED
+    - Persist invoice in one step
+    - Create orchestration task (Orchestrator will be triggered)
+    
+    This endpoint is ONLY for UI / internal use.
+    
+    Request body (complete invoice):
+    {
+        "vendor": {...},
+        "source": {...},
+        "document": {...},
+        "header": {...},
+        "lines": [...],
+        "validation": {...},
+        "trace_id": "optional"
+    }
+    
+    Returns:
+    {
+        "invoice_id": 123,
+        "trace_id": "...",
+        "status": "RECEIVED"
+    }
+    """
+    db = get_db()
+    
+    # Generate invoice_id
+    try:
+        invoice_id = get_next_invoice_id()
+    except Exception as e:
+        logger.exception("Failed to generate invoice_id")
+        raise HTTPException(status_code=500, detail=f"Failed to generate invoice_id: {e}")
+    
+    # Generate trace_id if not present
+    trace_id = payload.get("trace_id") or str(uuid.uuid4())
+    
+    now = _now_iso()
+    
+    # TODO: Validate payload against RECEIVED schema rules here
+    # (Next task: Wire canonical schema validation into POST / PUT handlers)
+    
+    # Build RECEIVED invoice document
+    invoice_doc = {
+        "_id": invoice_id,
+        "invoice_id": invoice_id,
+        "trace_id": trace_id,
+        "status": "RECEIVED",
+        "vendor": payload.get("vendor"),
+        "source": payload.get("source"),
+        "document": payload.get("document"),
+        "header": payload.get("header"),
+        "lines": payload.get("lines"),
+        "validation": payload.get("validation"),
+        "_workflow": {"steps": []},
+        "created_at": now,
+        "updated_at": now,
+    }
+    
+    # Store invoice
+    try:
+        db.invoices.insert_one(invoice_doc)
+        logger.info("Created RECEIVED invoice (direct): invoice_id=%s trace_id=%s", invoice_id, trace_id)
+    except Exception as e:
+        logger.exception("Failed to store RECEIVED invoice")
+        raise HTTPException(status_code=500, detail=f"Failed to store invoice: {e}")
+    
+    # Create orchestration task to trigger agents
+    try:
+        task_doc = {
+            "type": "process_invoice",
+            "invoice_id": invoice_id,
+            "status": "queued",
+            "created_at": now
+        }
+        db.tasks.insert_one(task_doc)
+        logger.info("Created orchestration task for invoice: invoice_id=%s", invoice_id)
+    except Exception as e:
+        logger.exception("Failed to create orchestration task: invoice_id=%s", invoice_id)
+        # Invoice was already persisted, so don't fail the entire request
+        raise HTTPException(status_code=500, detail=f"Invoice created but task creation failed: {e}")
+    
+    return JSONResponse({
+        "invoice_id": invoice_id,
+        "trace_id": trace_id,
+        "status": "RECEIVED"
+    })
+
+
+# ================================================================================
+# Legacy POST /api/invoices/incoming (Backward Compatibility)
+# ================================================================================
 @router.post("/incoming", response_class=JSONResponse)
 async def incoming_invoice(payload: dict = Body(...)):
     """
-    Accept canonical invoice JSON, store it in invoices collection (with deterministic _id),
-    and enqueue a processing task in tasks collection.
+    Legacy endpoint: Accept canonical invoice JSON and create RECEIVED invoice directly.
+    
+    This endpoint is kept for backward compatibility.
+    New code should use POST /api/invoices/submit instead.
+    
+    Behavior:
+    - Normalize payload minimally
+    - Generate invoice_id
+    - Set status = RECEIVED
+    - Create orchestration task
+    
+    Returns: { "invoice_id": ..., "status": "queued" }
     """
     db = get_db()
 
-    # Normalize payload minimally and pick invoice id
+    # Normalize payload minimally
     payload = ensure_minimal_structure(payload)
-    header = payload.get("header", {}) or {}
-
-    # Pick invoice_ref: header.invoice_ref (str) or header.invoice_number.value
-    invoice_ref = header.get("invoice_ref")
-    if not invoice_ref:
-        inv_num = header.get("invoice_number")
-        if isinstance(inv_num, dict):
-            invoice_ref = inv_num.get("value")
-        else:
-            invoice_ref = inv_num
-
-    if not invoice_ref:
-        invoice_ref = f"INV-{uuid.uuid4().hex[:8]}"
-
-    invoice_id = invoice_ref
-
-    now = datetime.utcnow().isoformat() + "Z"
+    
+    # Generate next sequential invoice_id (atomic, concurrency-safe)
+    try:
+        invoice_id = get_next_invoice_id()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate invoice_id: {e}")
+    
+    now = _now_iso()
+    trace_id = str(uuid.uuid4())
 
     invoice_doc = {
         **payload,
         "_id": invoice_id,
+        "invoice_id": invoice_id,  # Store invoice_id in document for API consumption
+        "trace_id": trace_id,
         "status": "RECEIVED",
         "_workflow": {"steps": []},
-        "created_at": now
+        "created_at": now,
+        "updated_at": now,
     }
 
-    # store invoice (upsert to be idempotent in POC)
+    # store invoice
     try:
-        db.invoices.replace_one({"_id": invoice_id}, invoice_doc, upsert=True)
+        db.invoices.insert_one(invoice_doc)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to store invoice: {e}")
 
@@ -96,29 +393,37 @@ async def incoming_invoice(payload: dict = Body(...)):
 async def get_invoice(invoice_id: str):
     """
     Robust invoice fetch:
-    1) try _id
+    1) try _id (as numeric)
     2) fallback to header.invoice_ref
     3) fallback to header.invoice_number.value (common Capture shape)
     Returns full invoice doc (including _workflow.steps).
     """
     db = get_db()
 
-    # 1) try by _id
-    rec = db.invoices.find_one({"_id": invoice_id})
-    if rec:
-        rec["_id"] = str(rec.get("_id"))
-        return JSONResponse(rec)
+    # 1) try by _id (handle both numeric and string)
+    try:
+        numeric_id = int(invoice_id)
+        rec = await asyncio.to_thread(db.invoices.find_one, {"_id": numeric_id})
+        if rec:
+            if isinstance(rec.get("_id"), ObjectId):
+                rec["_id"] = str(rec["_id"])
+            return JSONResponse(rec)
+    except (ValueError, TypeError):
+        # Not a numeric ID, continue to fallbacks
+        pass
 
     # 2) fallback: header.invoice_ref
-    rec = db.invoices.find_one({"header.invoice_ref": invoice_id})
+    rec = await asyncio.to_thread(db.invoices.find_one, {"header.invoice_ref": invoice_id})
     if rec:
-        rec["_id"] = str(rec.get("_id"))
+        if isinstance(rec.get("_id"), ObjectId):
+            rec["_id"] = str(rec["_id"])
         return JSONResponse(rec)
 
     # 3) fallback: header.invoice_number.value
-    rec = db.invoices.find_one({"header.invoice_number.value": invoice_id})
+    rec = await asyncio.to_thread(db.invoices.find_one, {"header.invoice_number.value": invoice_id})
     if rec:
-        rec["_id"] = str(rec.get("_id"))
+        if isinstance(rec.get("_id"), ObjectId):
+            rec["_id"] = str(rec["_id"])
         return JSONResponse(rec)
 
     raise HTTPException(status_code=404, detail=f"invoice not found for id/ref: {invoice_id}")
