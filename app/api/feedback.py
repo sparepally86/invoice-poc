@@ -21,7 +21,7 @@ async def post_feedback(payload: Dict[str, Any] = Body(...)):
 
     Body:
     {
-      "invoice_id": "INV-123",
+      "invoice_id": "INV-123" or 123,
       "step_id": "step-abc",    # optional: the explain step id or timestamp
       "verdict": "accept|reject|suggest_edit",
       "notes": "free text optional",
@@ -37,6 +37,9 @@ async def post_feedback(payload: Dict[str, Any] = Body(...)):
 
     if not invoice_id or not verdict:
         raise HTTPException(status_code=400, detail="invoice_id and verdict are required")
+
+    # Normalize invoice_id to string for consistent storage and lookup
+    invoice_id = str(invoice_id)
 
     doc = {
         "invoice_id": invoice_id,
@@ -60,7 +63,7 @@ async def get_feedback(invoice_id: str = Path(...)):
     """
     db = get_db()
     try:
-        # fetch recent 50 feedback docs for this invoice
+        # fetch recent 50 feedback docs for this invoice (invoice_id is always stored as string)
         cursor = await _to_thread(db.feedback.find, {"invoice_id": invoice_id})
         # convert to list in thread to avoid iterating the cursor in event loop
         docs = await _to_thread(list, cursor.sort("created_at", -1).limit(50))

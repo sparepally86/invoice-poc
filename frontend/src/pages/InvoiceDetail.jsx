@@ -368,7 +368,7 @@ export default function InvoiceDetail() {
         {/* Sidebar */}
         <div className="space-y-6">
           {invoice && invoice._id && (
-            <ExplanationPanel invoiceId={invoice._id} />
+            <ExplanationPanel invoiceId={String(invoice._id)} />
           )}
         </div>
       </div>
