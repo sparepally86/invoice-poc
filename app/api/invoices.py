@@ -10,6 +10,7 @@ from starlette.responses import StreamingResponse
 import json
 import asyncio
 from app.utils.normalize_invoice import ensure_minimal_structure
+from app.utils.schema_validator import validate_received_invoice
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -180,8 +181,20 @@ async def submit_draft_invoice(invoice_id: int, payload: dict = Body(...)):
     existing["status"] = "RECEIVED"
     existing["updated_at"] = now
     
-    # TODO: Add schema validation for RECEIVED status here
-    # (Next task: Wire canonical schema validation into POST / PUT handlers)
+    # Validate invoice against canonical schema for RECEIVED status
+    is_valid, errors = validate_received_invoice(existing)
+    if not is_valid:
+        logger.warning(
+            "PUT /invoices: schema validation failed: invoice_id=%s errors=%s",
+            invoice_id, errors
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Schema validation failed",
+                "fields": errors
+            }
+        )
     
     # Persist updated invoice
     try:
@@ -273,9 +286,6 @@ async def submit_received_invoice(payload: dict = Body(...)):
     
     now = _now_iso()
     
-    # TODO: Validate payload against RECEIVED schema rules here
-    # (Next task: Wire canonical schema validation into POST / PUT handlers)
-    
     # Build RECEIVED invoice document
     invoice_doc = {
         "_id": invoice_id,
@@ -292,6 +302,21 @@ async def submit_received_invoice(payload: dict = Body(...)):
         "created_at": now,
         "updated_at": now,
     }
+    
+    # Validate invoice against canonical schema for RECEIVED status
+    is_valid, errors = validate_received_invoice(invoice_doc)
+    if not is_valid:
+        logger.warning(
+            "POST /invoices/submit: schema validation failed: invoice_id=%s errors=%s",
+            invoice_id, errors
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Schema validation failed",
+                "fields": errors
+            }
+        )
     
     # Store invoice
     try:
