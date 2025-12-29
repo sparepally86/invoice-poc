@@ -19,7 +19,19 @@ async def post_explain(invoice_id: str = Path(...), payload: dict = Body({})):
 
     db = get_db()
     try:
-        inv = await asyncio_to_thread(db.invoices.find_one, {"_id": invoice_id})
+        # Convert invoice_id to numeric if possible
+        numeric_id = None
+        try:
+            numeric_id = int(invoice_id)
+        except (ValueError, TypeError):
+            pass
+        
+        inv = None
+        if numeric_id is not None:
+            inv = await asyncio_to_thread(db.invoices.find_one, {"_id": numeric_id})
+        if not inv:
+            inv = await asyncio_to_thread(db.invoices.find_one, {"header.invoice_ref": invoice_id})
+        
         if not inv:
             return JSONResponse({"ok": False, "error": "invoice_not_found"}, status_code=404)
 
@@ -62,7 +74,20 @@ async def get_latest_explain(invoice_id: str = Path(..., description="Invoice _i
     Return the most recent ExplainAgent step for the specified invoice.
     """
     db = get_db()
-    invoice = await asyncio_to_thread(db.invoices.find_one, {"_id": invoice_id})
+    
+    # Convert invoice_id to numeric if possible (handle both numeric and string IDs)
+    numeric_id = None
+    try:
+        numeric_id = int(invoice_id)
+    except (ValueError, TypeError):
+        pass
+    
+    invoice = None
+    if numeric_id is not None:
+        invoice = await asyncio_to_thread(db.invoices.find_one, {"_id": numeric_id})
+    if not invoice:
+        invoice = await asyncio_to_thread(db.invoices.find_one, {"header.invoice_ref": invoice_id})
+    
     if not invoice:
         raise HTTPException(status_code=404, detail="invoice_not_found")
 

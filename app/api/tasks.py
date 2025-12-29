@@ -29,7 +29,19 @@ async def list_tasks(status: str = Query(None), includeResolved: bool = Query(Fa
 @router.get("/invoices/{invoice_id}")
 async def get_invoice(invoice_id: str):
     db = get_db()
-    doc = db.invoices.find_one({"_id": invoice_id})
+    # Convert invoice_id to numeric if possible
+    numeric_id = None
+    try:
+        numeric_id = int(invoice_id)
+    except (ValueError, TypeError):
+        pass
+    
+    doc = None
+    if numeric_id is not None:
+        doc = db.invoices.find_one({"_id": numeric_id})
+    if not doc:
+        doc = db.invoices.find_one({"header.invoice_ref": invoice_id})
+    
     if not doc:
         return JSONResponse({"error": "not_found"}, status_code=404)
     # convert _id if needed

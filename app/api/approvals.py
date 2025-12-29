@@ -14,7 +14,19 @@ async def approve_invoice(invoice_id: str, body: Dict[str, Any] = Body(...)):
     Approve an invoice. body: {"approver":"user:alice","comment":"ok"}
     """
     db = get_db()
-    rec = db.invoices.find_one({"_id": invoice_id})
+    # Convert invoice_id to numeric if possible
+    numeric_id = None
+    try:
+        numeric_id = int(invoice_id)
+    except (ValueError, TypeError):
+        pass
+    
+    rec = None
+    if numeric_id is not None:
+        rec = db.invoices.find_one({"_id": numeric_id})
+    if not rec:
+        rec = db.invoices.find_one({"header.invoice_ref": invoice_id})
+    
     if not rec:
         raise HTTPException(status_code=404, detail="invoice not found")
 
@@ -36,7 +48,19 @@ async def approve_invoice(invoice_id: str, body: Dict[str, Any] = Body(...)):
 @router.post("/invoices/{invoice_id}/reject", response_class=JSONResponse)
 async def reject_invoice(invoice_id: str, body: Dict[str, Any] = Body(...)):
     db = get_db()
-    rec = db.invoices.find_one({"_id": invoice_id})
+    # Convert invoice_id to numeric if possible
+    numeric_id = None
+    try:
+        numeric_id = int(invoice_id)
+    except (ValueError, TypeError):
+        pass
+    
+    rec = None
+    if numeric_id is not None:
+        rec = db.invoices.find_one({"_id": numeric_id})
+    if not rec:
+        rec = db.invoices.find_one({"header.invoice_ref": invoice_id})
+    
     if not rec:
         raise HTTPException(status_code=404, detail="invoice not found")
 
