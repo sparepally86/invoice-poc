@@ -96,9 +96,20 @@ async def generate_invoice(
 
             total_amount = sum((ln.get("line_amount") or 0) for ln in lines)
             # Extract real vendor data from PO document
-            vendor_name = (po_doc.get("vendor_name") or po_doc.get("vendor") or 
-                          po_doc.get("name") or "Unknown Vendor")
+            # Priority: name_canonical > aliases[0] > vendor_name/vendor/name fields
+            vendor_name = po_doc.get("name_canonical")
+            if not vendor_name:
+                aliases = po_doc.get("aliases", [])
+                if aliases and len(aliases) > 0:
+                    vendor_name = aliases[0]
+            if not vendor_name:
+                vendor_name = (po_doc.get("vendor_name") or po_doc.get("vendor") or 
+                              po_doc.get("name"))
             vendor_number = str(po_doc.get("vendor_id") or po_doc.get("_id") or "V0001")
+            
+            # If still no name found, construct from vendor_number
+            if not vendor_name:
+                vendor_name = f"Vendor {vendor_number}"
             
             now = datetime.datetime.utcnow()
             invoice_date = (now - datetime.timedelta(days=random.randint(1, 7))).date().isoformat()
@@ -125,10 +136,19 @@ async def generate_invoice(
             return {"generated_invoice": generated}
 
         elif mode == "nonpo":
-            # Pick a random vendor with real data from database
-            vendor_doc = await asyncio.to_thread(_find_one_sync, db.vendors, {})
-            if not vendor_doc:
+            # Pick a random vendor from all available vendors in database
+            first_vendor = await asyncio.to_thread(_find_one_sync, db.vendors, {})
+            if not first_vendor:
                 raise HTTPException(status_code=422, detail="No vendors found in Vendor master — create some vendors first")
+
+            # Get total vendor count and randomly select one
+            total = await asyncio.to_thread(_count_documents_sync, db.vendors, {})
+            if total <= 1:
+                vendor_doc = first_vendor
+            else:
+                skip = random.randint(0, max(0, total - 1))
+                docs = await asyncio.to_thread(_find_with_skip_sync, db.vendors, {}, skip, 1)
+                vendor_doc = docs[0] if docs else first_vendor
 
             num_lines = 2 if split_first_line else 1
             lines = []
@@ -144,10 +164,20 @@ async def generate_invoice(
 
             total_amount = sum(ln["line_amount"] for ln in lines)
             # Extract real vendor data from database doc
-            vendor_name = (vendor_doc.get("name_raw") or vendor_doc.get("name") or 
-                          vendor_doc.get("vendor_name") or vendor_doc.get("vendor") or "Unknown Vendor")
+            # Priority: name_canonical > aliases[0] > name_raw/name/vendor_name/vendor fields
+            vendor_name = vendor_doc.get("name_canonical")
+            if not vendor_name:
+                aliases = vendor_doc.get("aliases", [])
+                if aliases and len(aliases) > 0:
+                    vendor_name = aliases[0]
+            if not vendor_name:
+                vendor_name = (vendor_doc.get("name_raw") or vendor_doc.get("name") or 
+                              vendor_doc.get("vendor_name") or vendor_doc.get("vendor"))
             vendor_number = str(vendor_doc.get("vendor_id") or vendor_doc.get("_id") or "V0001")
             
+            # If still no name found in DB, construct from vendor_number
+            if not vendor_name:
+                vendor_name = f"Vendor {vendor_number}"            
             now = datetime.datetime.utcnow()
             invoice_date = (now - datetime.timedelta(days=random.randint(1, 7))).date().isoformat()
             received_at = now.isoformat() + "Z"
