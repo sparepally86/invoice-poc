@@ -518,9 +518,20 @@ async def invoice_events(request: Request, invoice_id: str):
     db = get_db()
 
     async def event_generator():
+        # Convert invoice_id to numeric if possible
+        numeric_id = None
+        try:
+            numeric_id = int(invoice_id)
+        except (ValueError, TypeError):
+            pass
+
         # initial fetch (blocking via to_thread)
         try:
-            inv = await asyncio.to_thread(_find_one_sync, db.invoices, {"_id": invoice_id})
+            inv = None
+            if numeric_id is not None:
+                inv = await asyncio.to_thread(_find_one_sync, db.invoices, {"_id": numeric_id})
+            if not inv:
+                inv = await asyncio.to_thread(_find_one_sync, db.invoices, {"header.invoice_ref": invoice_id})
         except Exception as e:
             # DB error — send an error event then stop
             yield format_sse("error", {"message": "DB error", "detail": str(e)})
@@ -546,7 +557,12 @@ async def invoice_events(request: Request, invoice_id: str):
                     break
 
                 # fetch current invoice doc
-                inv = await asyncio.to_thread(_find_one_sync, db.invoices, {"_id": invoice_id})
+                inv = None
+                if numeric_id is not None:
+                    inv = await asyncio.to_thread(_find_one_sync, db.invoices, {"_id": numeric_id})
+                if not inv:
+                    inv = await asyncio.to_thread(_find_one_sync, db.invoices, {"header.invoice_ref": invoice_id})
+                    
                 if not inv:
                     # invoice deleted or not yet created
                     # send a not_found event and continue polling (or break if you prefer)
