@@ -95,7 +95,10 @@ async def generate_invoice(
                 })
 
             total_amount = sum((ln.get("line_amount") or 0) for ln in lines)
-            vendor_name = po_doc.get("vendor_name") or po_doc.get("vendor") or "Unknown Vendor"
+            # Extract real vendor data from PO document
+            vendor_name = (po_doc.get("vendor_name") or po_doc.get("vendor") or 
+                          po_doc.get("name") or "Unknown Vendor")
+            vendor_number = str(po_doc.get("vendor_id") or po_doc.get("_id") or "V0001")
             
             now = datetime.datetime.utcnow()
             invoice_date = (now - datetime.timedelta(days=random.randint(1, 7))).date().isoformat()
@@ -113,6 +116,7 @@ async def generate_invoice(
                     "invoice_number": f"INV-{random.randint(10000, 99999)}",
                     "invoice_date": invoice_date,
                     "vendor_name": vendor_name,
+                    "vendor_number": vendor_number,
                     "currency": po_doc.get("currency", "INR"),
                     "total_amount": total_amount
                 },
@@ -121,7 +125,7 @@ async def generate_invoice(
             return {"generated_invoice": generated}
 
         elif mode == "nonpo":
-            # pick a random vendor (blocking calls run in thread)
+            # Pick a random vendor with real data from database
             vendor_doc = await asyncio.to_thread(_find_one_sync, db.vendors, {})
             if not vendor_doc:
                 raise HTTPException(status_code=422, detail="No vendors found in Vendor master — create some vendors first")
@@ -139,7 +143,10 @@ async def generate_invoice(
                 })
 
             total_amount = sum(ln["line_amount"] for ln in lines)
-            vendor_name = vendor_doc.get("name_raw") or vendor_doc.get("name") or "Vendor"
+            # Extract real vendor data from database doc
+            vendor_name = (vendor_doc.get("name_raw") or vendor_doc.get("name") or 
+                          vendor_doc.get("vendor_name") or vendor_doc.get("vendor") or "Unknown Vendor")
+            vendor_number = str(vendor_doc.get("vendor_id") or vendor_doc.get("_id") or "V0001")
             
             now = datetime.datetime.utcnow()
             invoice_date = (now - datetime.timedelta(days=random.randint(1, 7))).date().isoformat()
@@ -151,12 +158,13 @@ async def generate_invoice(
                     "received_at": received_at
                 },
                 "document": {
-                    "image_url": f"https://storage.example.com/vendor-{vendor_doc.get('vendor_id', 'unknown')}.pdf"
+                    "image_url": f"https://storage.example.com/vendor-{vendor_number}.pdf"
                 },
                 "header": {
                     "invoice_number": f"INV-NP-{random.randint(1000, 9999)}",
                     "invoice_date": invoice_date,
                     "vendor_name": vendor_name,
+                    "vendor_number": vendor_number,
                     "currency": vendor_doc.get("currency", "INR"),
                     "total_amount": total_amount
                 },

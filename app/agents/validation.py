@@ -11,13 +11,14 @@ def run_validation(db, invoice_doc: Dict[str, Any]) -> Dict[str, Any]:
     """
     Deterministic validation rules.
     Returns an AgentResponse-like dict.
+    Validates against canonical schema v1: invoice_number, invoice_date, vendor_name, vendor_number, currency, total_amount
     """
     issues: List[Dict[str, Any]] = []
     header = invoice_doc.get("header", {})
-    items = invoice_doc.get("items", []) or []
+    lines = invoice_doc.get("lines", []) or []
 
-    # Mandatory fields
-    mandatory = ["invoice_ref", "invoice_date", "vendor_number", "currency", "amount"]
+    # Mandatory fields per canonical schema v1
+    mandatory = ["invoice_number", "invoice_date", "vendor_number", "currency", "total_amount"]
     for f in mandatory:
         if f not in header or header.get(f) in (None, ""):
             issues.append({
@@ -48,19 +49,13 @@ def run_validation(db, invoice_doc: Dict[str, Any]) -> Dict[str, Any]:
             "message": f"Vendor '{vendor_id}' not found in vendor master"
         })
 
-    # Amount vs items sum (robust header amount parsing)
-    header_amount = header.get("amount")
-    if header_amount is None:
-        gt = header.get("grand_total")
-        if isinstance(gt, dict):
-            header_amount = gt.get("value")
-        else:
-            header_amount = gt
+    # Amount vs lines sum (robust header amount parsing)
+    header_amount = header.get("total_amount")
     try:
         header_amount = float(header_amount) if header_amount is not None else 0.0
     except Exception:
         header_amount = 0.0
-    sum_items = float(sum([float(i.get("amount", 0) or 0) for i in items]))
+    sum_items = float(sum([float(ln.get("line_amount", 0) or 0) for ln in lines]))
     # avoid division by zero
     diff_pct = 0.0
     if header_amount:
@@ -72,9 +67,9 @@ def run_validation(db, invoice_doc: Dict[str, Any]) -> Dict[str, Any]:
     if diff_pct > AMOUNT_TOLERANCE_PCT:
         issues.append({
             "code": "AMOUNT_MISMATCH",
-            "field": "header.amount",
+            "field": "header.total_amount",
             "severity": "E",
-            "message": f"Header amount {header_amount} != sum(items) {sum_items} (diff_pct={diff_pct:.2f} > tol={AMOUNT_TOLERANCE_PCT})"
+            "message": f"Header total_amount {header_amount} != sum(lines) {sum_items} (diff_pct={diff_pct:.2f} > tol={AMOUNT_TOLERANCE_PCT})"
         })
 
     # Determine status

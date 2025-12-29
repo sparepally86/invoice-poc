@@ -254,7 +254,7 @@ export default function InvoiceDetail() {
                       <div>
                         <div className="text-xs text-slate-500 uppercase tracking-wider">Amount</div>
                         <div className="font-medium text-slate-900">
-                          {header.currency || "USD"} ${(header.amount ?? header.grand_total?.value ?? 0).toLocaleString()}
+                          {header.currency || "USD"} ${(header.total_amount ?? header.amount ?? header.grand_total?.value ?? 0).toLocaleString()}
                         </div>
                       </div>
                     </div>
