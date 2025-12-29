@@ -35,7 +35,7 @@ async def dev_db_health():
         # surface error for quick diagnostics
         raise HTTPException(status_code=500, detail=f"mongo_ping_failed: {e}")
 
-# The new endpoint
+# The new endpoint - generates canonical invoice schema v1
 @router.post("/dev/generate-invoice")
 async def generate_invoice(
     mode: str = Query("po"),                    # "po" or "nonpo"
@@ -43,10 +43,17 @@ async def generate_invoice(
     split_first_line: Optional[bool] = Query(False)
 ):
     """
-    Dev helper:
-    - mode=po -> PO-based invoice. If po_number provided, use it. Otherwise pick a random PO.
-    - mode=nonpo -> generate a synthetic non-PO invoice.
-    Uses asyncio.to_thread to call blocking PyMongo safely.
+    Dev helper: Generates canonical invoice schema v1 payload.
+    
+    Output format:
+    {
+      "source": { "system": "UI", "received_at": ".." },
+      "document": { "image_url": ".." },
+      "header": { "invoice_number", "invoice_date", "vendor_name", "currency", "total_amount" },
+      "lines": [ { "line_number", "description", "quantity", "line_amount" } ]
+    }
+    
+    Note: Backend-managed fields (invoice_id, trace_id, status, workflow, audit) are NOT set.
     """
     db = get_db()
     try:
@@ -74,30 +81,43 @@ async def generate_invoice(
 
             po_doc = selected_po
             po_lines = po_doc.get("lines", []) or po_doc.get("items", []) or []
-            items = []
-            for ln in po_lines:
+            lines = []
+            for idx, ln in enumerate(po_lines, 1):
                 qty = ln.get("quantity") or ln.get("qty") or 1
                 amt = ln.get("amount")
                 if amt is None:
                     amt = (ln.get("unit_price") or ln.get("price") or 0) * qty
-                items.append({
-                    "item_text": ln.get("item_text") or ln.get("description") or ln.get("name") or "",
+                lines.append({
+                    "line_number": idx,
+                    "description": ln.get("item_text") or ln.get("description") or ln.get("name") or "Item",
                     "quantity": qty,
-                    "amount": amt
+                    "line_amount": amt
                 })
 
-            total_amount = sum((it.get("amount") or 0) for it in items)
-            header = {
-                "po_number": po_doc.get("po_number"),
-                "invoice_ref": f"GEN-{random.randint(10000,99999)}",
-                "invoice_date": datetime.datetime.utcnow().date().isoformat(),
-                "vendor_number": po_doc.get("vendor_id") or po_doc.get("vendor_number") or po_doc.get("vendor"),
-                "vendor_name": po_doc.get("vendor_name") or po_doc.get("vendor") or "Unknown Vendor",
-                "currency": po_doc.get("currency", "INR"),
-                "amount": total_amount
-            }
+            total_amount = sum((ln.get("line_amount") or 0) for ln in lines)
+            vendor_name = po_doc.get("vendor_name") or po_doc.get("vendor") or "Unknown Vendor"
+            
+            now = datetime.datetime.utcnow()
+            invoice_date = (now - datetime.timedelta(days=random.randint(1, 7))).date().isoformat()
+            received_at = now.isoformat() + "Z"
 
-            generated = {"header": header, "items": items}
+            generated = {
+                "source": {
+                    "system": "UI",
+                    "received_at": received_at
+                },
+                "document": {
+                    "image_url": f"https://storage.example.com/po-{po_doc.get('po_number', 'unknown')}.pdf"
+                },
+                "header": {
+                    "invoice_number": f"INV-{random.randint(10000, 99999)}",
+                    "invoice_date": invoice_date,
+                    "vendor_name": vendor_name,
+                    "currency": po_doc.get("currency", "INR"),
+                    "total_amount": total_amount
+                },
+                "lines": lines
+            }
             return {"generated_invoice": generated}
 
         elif mode == "nonpo":
@@ -107,27 +127,41 @@ async def generate_invoice(
                 raise HTTPException(status_code=422, detail="No vendors found in Vendor master — create some vendors first")
 
             num_lines = 2 if split_first_line else 1
-            items = []
+            lines = []
             for i in range(num_lines):
                 qty = random.choice([1, 2, 3])
                 unit_price = random.choice([1000, 2500, 5000])
-                items.append({
-                    "item_text": f"Synthetic line {i+1}",
+                lines.append({
+                    "line_number": i + 1,
+                    "description": f"Synthetic line {i+1}",
                     "quantity": qty,
-                    "amount": qty * unit_price
+                    "line_amount": qty * unit_price
                 })
 
-            total_amount = sum(it["amount"] for it in items)
-            header = {
-                "invoice_ref": f"GEN-NP-{random.randint(1000,9999)}",
-                "invoice_date": datetime.datetime.utcnow().date().isoformat(),
-                "vendor_number": vendor_doc.get("vendor_id") or vendor_doc.get("_id"),
-                "vendor_name": vendor_doc.get("name_raw") or vendor_doc.get("name") or "Vendor",
-                "currency": vendor_doc.get("currency", "INR"),
-                "amount": total_amount,
-            }
+            total_amount = sum(ln["line_amount"] for ln in lines)
+            vendor_name = vendor_doc.get("name_raw") or vendor_doc.get("name") or "Vendor"
+            
+            now = datetime.datetime.utcnow()
+            invoice_date = (now - datetime.timedelta(days=random.randint(1, 7))).date().isoformat()
+            received_at = now.isoformat() + "Z"
 
-            generated = {"header": header, "items": items}
+            generated = {
+                "source": {
+                    "system": "UI",
+                    "received_at": received_at
+                },
+                "document": {
+                    "image_url": f"https://storage.example.com/vendor-{vendor_doc.get('vendor_id', 'unknown')}.pdf"
+                },
+                "header": {
+                    "invoice_number": f"INV-NP-{random.randint(1000, 9999)}",
+                    "invoice_date": invoice_date,
+                    "vendor_name": vendor_name,
+                    "currency": vendor_doc.get("currency", "INR"),
+                    "total_amount": total_amount
+                },
+                "lines": lines
+            }
             return {"generated_invoice": generated}
 
         else:

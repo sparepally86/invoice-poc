@@ -162,15 +162,28 @@ export default function SubmitInvoice() {
   const [mode, setMode] = useState("po");
   const [splitLineItem, setSplitLineItem] = useState(true);
   const [jsonText, setJsonText] = useState(`{
+  "source": {
+    "system": "UI",
+    "received_at": "2025-01-01T10:00:00Z"
+  },
+  "document": {
+    "image_url": "https://storage.example.com/invoice.pdf"
+  },
   "header": {
-    "invoice_ref": "TEST-1",
-    "invoice_date": "2025-10-10",
-    "vendor_number": "V0001",
+    "invoice_number": "INV-001",
+    "invoice_date": "2025-01-01",
     "vendor_name": "Vendor 1",
     "currency": "INR",
-    "amount": 1000
+    "total_amount": 5000
   },
-  "items": []
+  "lines": [
+    {
+      "line_number": 1,
+      "description": "Services provided",
+      "quantity": 1,
+      "line_amount": 5000
+    }
+  ]
 }`);
   const [statusMsg, setStatusMsg] = useState(null);
   const [loadingGen, setLoadingGen] = useState(false);
@@ -203,26 +216,18 @@ export default function SubmitInvoice() {
 
       if (missMandatory) {
         if (mutated.header) {
-          delete mutated.header.invoice_ref;
+          delete mutated.header.invoice_number;
         }
       }
 
       if (badVendor) {
         if (!mutated.header) mutated.header = {};
-        mutated.header.vendor_number = "BAD-VENDOR-9999";
-        mutated.header.vendor_name = "NonExistent Vendor";
-        if (mutated.vendor) {
-          mutated.vendor.vendor_id = "BAD-VENDOR-9999";
-          mutated.vendor.name_raw = "NonExistent Vendor";
-        }
+        mutated.header.vendor_name = "NonExistent Vendor #9999";
       }
 
       if (badPO) {
-        if (!mutated.header) mutated.header = {};
-        mutated.header.po_number = "PO-BAD-000";
-        if (mutated.items && mutated.items.length > 0) {
-          mutated.items[0].amount = (mutated.items[0].amount || 0) + 123.45;
-        }
+        if (!mutated.lines) mutated.lines = [];
+        mutated.lines = [];
       }
 
       setJsonText(JSON.stringify(mutated, null, 2));
@@ -241,7 +246,7 @@ export default function SubmitInvoice() {
     setLastInvoiceId(null);
     try {
       const json = JSON.parse(jsonText);
-      const url = `${BACKEND}/api/v1/incoming`;
+      const url = `${BACKEND}/api/v1/invoices/submit`;
       const r = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
