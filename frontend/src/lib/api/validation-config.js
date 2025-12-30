@@ -3,7 +3,7 @@
  * Communicates with /api/v1/admin/validation-config endpoints
  */
 
-const API_BASE = 'http://localhost:8001/api/v1/admin/validation-config';
+const API_BASE = 'http://localhost:8000/api/v1/admin/validation-config';
 
 // Helper to get authorization token
 const getAuthHeaders = () => {

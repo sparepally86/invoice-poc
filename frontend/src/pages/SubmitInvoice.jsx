@@ -3,7 +3,7 @@ import { Upload, Trash2, Shuffle, Send, CheckCircle, XCircle, Clock, AlertCircle
 import { NegativeScenariosAccordion } from "../components/NegativeScenariosAccordion";
 import { applyNegativeScenarios } from "../lib/invoice-scenarios";
 
-const BACKEND = (import.meta.env.VITE_BACKEND_URL || "").replace(/\/$/, "") || "https://invoice-poc-1gpt.onrender.com";
+const BACKEND = (import.meta.env.VITE_BACKEND_URL || "").replace(/\/$/, "") || "http://localhost:8000";
 
 const STATUS_ICONS = {
   RECEIVED: { icon: FileText, color: "text-slate-600 bg-slate-100" },
