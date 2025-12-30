@@ -154,6 +154,12 @@ async def process_task(task):
         # persist validation output into invoice document under _workflow.steps
         await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$push": {"_workflow.steps": validation_out}})
 
+        # Extract and persist structured ValidationResult to invoice.validation
+        validation_result = validation_out.get("validation")
+        if validation_result:
+            await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$set": {"validation": validation_result}})
+            logger.info("[task_id=%s invoice_id=%s] ValidationResult persisted: status=%s", task_id, invoice_id, validation_result.get("status"))
+
         # compute status and set via helper
         new_status = "VALIDATED" if validation_out.get("status") == "completed" else "EXCEPTION"
         logger.info("[task_id=%s invoice_id=%s] ValidationAgent completed: status=%s", task_id, invoice_id, new_status)
