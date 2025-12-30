@@ -164,7 +164,11 @@ def _validate_financial_rules(invoice_doc: Dict[str, Any]) -> List[Dict[str, Any
     Validate FINANCIAL rules: Internal numerical consistency.
     
     FINANCIAL rules validate amounts and consistency.
-    Severity is tolerance-based: SOFT if within warning threshold, HARD if beyond.
+    Includes:
+    - E2-F1: Header total vs line sum mismatch (tolerance-based, $1.00 fixed)
+    - E2-F2: Tax total consistency (tolerance-based, $1.00 fixed)
+    - E2-F3: Discount math validation (always SOFT)
+    - E2-F4: Credit memo sign validation (always HARD)
     
     Returns:
         List of financial validation issues
@@ -173,7 +177,11 @@ def _validate_financial_rules(invoice_doc: Dict[str, Any]) -> List[Dict[str, Any
     header = invoice_doc.get("header", {})
     lines = invoice_doc.get("lines", []) or []
     
-    # Amount vs lines sum (robust header amount parsing)
+    # Fixed tolerance for E2 rules: $1.00 absolute difference
+    ABSOLUTE_TOLERANCE = 1.00
+    
+    # === E2-F1: Header Total vs Line Sum Mismatch ===
+    # Header total must equal sum of line amounts within $1.00 tolerance
     header_amount = header.get("total_amount")
     try:
         header_amount = float(header_amount) if header_amount is not None else 0.0
@@ -182,32 +190,163 @@ def _validate_financial_rules(invoice_doc: Dict[str, Any]) -> List[Dict[str, Any
     
     sum_items = float(sum([float(ln.get("line_amount", 0) or 0) for ln in lines]))
     
-    # Avoid division by zero
-    diff_pct = 0.0
-    if header_amount:
-        diff_pct = abs(sum_items - float(header_amount)) / float(header_amount) * 100.0
-    else:
-        if sum_items != 0:
-            diff_pct = 100.0
+    # Calculate absolute difference
+    diff_abs = abs(sum_items - float(header_amount))
     
-    # Check for amount mismatch and determine severity based on tolerance
-    if diff_pct > AMOUNT_TOLERANCE_PCT:
-        # Determine severity: SOFT if within warning threshold, HARD if beyond
-        severity = "SOFT" if diff_pct <= AMOUNT_WARNING_THRESHOLD_PCT else "HARD"
+    if diff_abs > ABSOLUTE_TOLERANCE:
+        # Absolute difference exceeds tolerance
+        severity = "HARD"
+        message = "Invoice total does not match sum of line amounts"
+    elif diff_abs > 0:
+        # Small difference within tolerance
+        severity = "SOFT"
+        message = "Invoice total slightly differs from sum of line amounts"
+    else:
+        # No difference
+        severity = None
+    
+    if severity:
         issues.append({
-            "code": "AMOUNT_MISMATCH",
+            "code": "TOTAL_LINE_MISMATCH",
             "category": "FINANCIAL",
             "severity": severity,
             "field": "header.total_amount",
-            "message": f"Header total_amount {header_amount} != sum(lines) {sum_items} (diff_pct={diff_pct:.2f})",
+            "message": message,
             "metadata": {
-                "header_amount": header_amount,
-                "sum_items": sum_items,
-                "diff_pct": round(diff_pct, 2),
-                "tolerance_pct": AMOUNT_TOLERANCE_PCT,
-                "warning_threshold_pct": AMOUNT_WARNING_THRESHOLD_PCT
+                "header_total": header_amount,
+                "line_sum": sum_items,
+                "diff_abs": round(diff_abs, 2),
+                "tolerance": ABSOLUTE_TOLERANCE
             }
         })
+    
+    # === E2-F2: Tax Total Consistency ===
+    # Header tax total must equal sum of tax amounts across lines (if tax is present)
+    header_tax = header.get("tax_amount")
+    if header_tax is not None:
+        try:
+            header_tax = float(header_tax)
+        except Exception:
+            header_tax = 0.0
+    else:
+        header_tax = 0.0
+    
+    # Sum tax amounts from lines (only if tax_amount field exists)
+    sum_tax = 0.0
+    has_tax = False
+    for ln in lines:
+        if "tax_amount" in ln:
+            has_tax = True
+            try:
+                tax_val = float(ln.get("tax_amount", 0) or 0)
+                sum_tax += tax_val
+            except Exception:
+                pass
+    
+    # Only check if tax is present
+    if has_tax or header_tax != 0.0:
+        diff_tax_abs = abs(sum_tax - header_tax)
+        
+        if diff_tax_abs > ABSOLUTE_TOLERANCE:
+            severity = "HARD"
+            message = "Invoice tax total does not match sum of line taxes"
+        elif diff_tax_abs > 0:
+            severity = "SOFT"
+            message = "Invoice tax total slightly differs from sum of line taxes"
+        else:
+            severity = None
+        
+        if severity:
+            issues.append({
+                "code": "TAX_TOTAL_MISMATCH",
+                "category": "FINANCIAL",
+                "severity": severity,
+                "field": "header.tax_amount",
+                "message": message,
+                "metadata": {
+                    "header_tax": header_tax,
+                    "line_tax_sum": sum_tax,
+                    "diff_abs": round(diff_tax_abs, 2),
+                    "tolerance": ABSOLUTE_TOLERANCE
+                }
+            })
+    
+    # === E2-F3: Discount Math Validation ===
+    # If discount rate or amount is present, discount amount must match base × rate
+    discount_amount = header.get("discount_amount")
+    discount_rate = header.get("discount_rate")
+    
+    if discount_amount is not None or discount_rate is not None:
+        try:
+            discount_amount = float(discount_amount) if discount_amount is not None else 0.0
+            discount_rate = float(discount_rate) if discount_rate is not None else 0.0
+        except Exception:
+            discount_amount = 0.0
+            discount_rate = 0.0
+        
+        # If both are present, validate math
+        if discount_amount > 0 and discount_rate > 0:
+            # For simplicity, check if discount_amount ≈ subtotal × (discount_rate / 100)
+            # subtotal = header_amount (before discount)
+            if header_amount > 0:
+                expected_discount = header_amount * (discount_rate / 100.0)
+                discount_diff = abs(expected_discount - discount_amount)
+                
+                if discount_diff > ABSOLUTE_TOLERANCE:
+                    issues.append({
+                        "code": "DISCOUNT_MATH_MISMATCH",
+                        "category": "FINANCIAL",
+                        "severity": "SOFT",
+                        "field": "header.discount",
+                        "message": "Discount amount does not match calculated value",
+                        "metadata": {
+                            "discount_amount": discount_amount,
+                            "discount_rate": discount_rate,
+                            "expected_discount": round(expected_discount, 2),
+                            "diff": round(discount_diff, 2)
+                        }
+                    })
+    
+    # === E2-F4: Credit Memo Sign Validation ===
+    # If invoice is marked as credit memo, header total and line amounts must be negative
+    is_credit_memo = header.get("is_credit_memo") or header.get("invoice_type") == "credit_memo"
+    
+    if is_credit_memo:
+        # Check if header total is negative
+        if header_amount >= 0:
+            issues.append({
+                "code": "INVALID_CREDIT_MEMO_SIGN",
+                "category": "FINANCIAL",
+                "severity": "HARD",
+                "field": "header.total_amount",
+                "message": "Credit memo amounts must be negative",
+                "metadata": {
+                    "total_amount": header_amount,
+                    "reason": "Credit memo total must be negative"
+                }
+            })
+        
+        # Check if line amounts are negative
+        for idx, line in enumerate(lines):
+            line_amount = line.get("line_amount")
+            try:
+                line_amount = float(line_amount) if line_amount is not None else 0.0
+            except Exception:
+                line_amount = 0.0
+            
+            if line_amount >= 0:
+                issues.append({
+                    "code": "INVALID_CREDIT_MEMO_SIGN",
+                    "category": "FINANCIAL",
+                    "severity": "HARD",
+                    "field": "lines[].line_amount",
+                    "message": "Credit memo amounts must be negative",
+                    "metadata": {
+                        "line_index": idx,
+                        "line_amount": line_amount,
+                        "reason": "All credit memo line amounts must be negative"
+                    }
+                })
     
     return issues
 
