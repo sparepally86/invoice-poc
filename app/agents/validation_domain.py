@@ -29,11 +29,18 @@ def _validate_structural_rules(invoice_doc: Dict[str, Any]) -> List[Dict[str, An
     STRUCTURAL rules determine whether the invoice is a coherent business document.
     All structural violations are HARD severity (blocking).
     
+    Includes:
+    - E1-S1: Empty or meaningless line description
+    - E1-S2: Duplicate or invalid line numbers
+    - E1-S3: Header total with no lines
+    - E1-S4: Zero or negative quantity (non-credit invoice)
+    
     Returns:
         List of structural validation issues
     """
     issues: List[Dict[str, Any]] = []
     header = invoice_doc.get("header", {})
+    lines = invoice_doc.get("lines", []) or []
     
     # Mandatory fields per canonical schema v1
     mandatory = ["invoice_number", "invoice_date", "vendor_number", "currency", "total_amount"]
@@ -46,6 +53,107 @@ def _validate_structural_rules(invoice_doc: Dict[str, Any]) -> List[Dict[str, An
                 "field": f"header.{f}",
                 "message": f"{f} is missing",
                 "metadata": {}
+            })
+    
+    # === E1-S1: Empty or Meaningless Line Description ===
+    # Each invoice line must have a non-empty, non-whitespace description
+    for idx, line in enumerate(lines):
+        description = line.get("description", "")
+        if isinstance(description, str):
+            description = description.strip()
+        if not description:
+            issues.append({
+                "code": "LINE_DESCRIPTION_EMPTY",
+                "category": "STRUCTURAL",
+                "severity": "HARD",
+                "field": "lines[].description",
+                "message": "Invoice line description cannot be empty",
+                "metadata": {"line_index": idx}
+            })
+    
+    # === E1-S2: Duplicate or Invalid Line Numbers ===
+    # Line numbers must be positive integers and unique across the invoice
+    line_numbers_seen = set()
+    for idx, line in enumerate(lines):
+        line_number = line.get("line_number")
+        
+        # Check if line_number is valid (positive integer)
+        try:
+            line_num_int = int(line_number) if line_number is not None else None
+            if line_num_int is None or line_num_int <= 0:
+                issues.append({
+                    "code": "INVALID_LINE_NUMBER",
+                    "category": "STRUCTURAL",
+                    "severity": "HARD",
+                    "field": "lines[].line_number",
+                    "message": "Invoice line numbers must be unique positive integers",
+                    "metadata": {"line_index": idx, "line_number": line_number}
+                })
+            elif line_num_int in line_numbers_seen:
+                # Duplicate line number
+                issues.append({
+                    "code": "INVALID_LINE_NUMBER",
+                    "category": "STRUCTURAL",
+                    "severity": "HARD",
+                    "field": "lines[].line_number",
+                    "message": "Invoice line numbers must be unique positive integers",
+                    "metadata": {"line_index": idx, "line_number": line_num_int, "reason": "duplicate"}
+                })
+            else:
+                line_numbers_seen.add(line_num_int)
+        except (ValueError, TypeError):
+            # Non-numeric line number
+            issues.append({
+                "code": "INVALID_LINE_NUMBER",
+                "category": "STRUCTURAL",
+                "severity": "HARD",
+                "field": "lines[].line_number",
+                "message": "Invoice line numbers must be unique positive integers",
+                "metadata": {"line_index": idx, "line_number": line_number, "reason": "non-numeric"}
+            })
+    
+    # === E1-S3: Header Total with No Lines ===
+    # If header.total_amount > 0, invoice must contain at least one line
+    total_amount = header.get("total_amount")
+    try:
+        total_amount = float(total_amount) if total_amount is not None else 0.0
+    except Exception:
+        total_amount = 0.0
+    
+    if total_amount > 0 and (not lines or len(lines) == 0):
+        issues.append({
+            "code": "TOTAL_WITHOUT_LINES",
+            "category": "STRUCTURAL",
+            "severity": "HARD",
+            "field": "header.total_amount",
+            "message": "Invoice total cannot exist without invoice lines",
+            "metadata": {"total_amount": total_amount, "lines_count": len(lines)}
+        })
+    
+    # === E1-S4: Zero or Negative Quantity (Non-Credit Invoice) ===
+    # Invoice line quantity must be > 0 for standard invoices
+    for idx, line in enumerate(lines):
+        quantity = line.get("quantity")
+        try:
+            quantity_num = float(quantity) if quantity is not None else 0.0
+            if quantity_num <= 0:
+                issues.append({
+                    "code": "INVALID_LINE_QUANTITY",
+                    "category": "STRUCTURAL",
+                    "severity": "HARD",
+                    "field": "lines[].quantity",
+                    "message": "Invoice line quantity must be greater than zero",
+                    "metadata": {"line_index": idx, "quantity": quantity_num}
+                })
+        except (ValueError, TypeError):
+            # Invalid quantity value
+            issues.append({
+                "code": "INVALID_LINE_QUANTITY",
+                "category": "STRUCTURAL",
+                "severity": "HARD",
+                "field": "lines[].quantity",
+                "message": "Invoice line quantity must be greater than zero",
+                "metadata": {"line_index": idx, "quantity": quantity, "reason": "non-numeric"}
             })
     
     return issues
