@@ -3,6 +3,9 @@ import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, CheckCircle, XCircle, FileText, Calendar, Building2, Hash, DollarSign, Clock, GitBranch, ChevronDown, ChevronUp } from "lucide-react";
 import api from "../lib/api";
 import ExplanationPanel from "../components/ExplanationPanel";
+import { ValidationStatusBanner } from "../components/ValidationStatusBanner";
+import { ValidationSummary } from "../components/ValidationSummary";
+import { ValidationIssueList } from "../components/ValidationIssueList";
 
 const STATUS_CONFIG = {
   RECEIVED: { label: "Received", color: "bg-slate-100 text-slate-700" },
@@ -123,6 +126,7 @@ export default function InvoiceDetail() {
   const tabs = [
     { id: "details", label: "Invoice Details" },
     { id: "items", label: `Line Items (${items.length})` },
+    { id: "validation", label: "Validation" },
     { id: "workflow", label: "Workflow" },
   ];
 
@@ -171,6 +175,9 @@ export default function InvoiceDetail() {
           </button>
         </div>
       </div>
+
+      {/* Validation Status Banner */}
+      <ValidationStatusBanner validation={invoice.validation} />
 
       {/* Message */}
       {msg && (
@@ -299,6 +306,13 @@ export default function InvoiceDetail() {
                       </tbody>
                     </table>
                   )}
+                </div>
+              )}
+
+              {activeTab === "validation" && (
+                <div className="space-y-6">
+                  <ValidationSummary validation={invoice.validation} />
+                  <ValidationIssueList validation={invoice.validation} />
                 </div>
               )}
 
