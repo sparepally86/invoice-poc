@@ -530,18 +530,183 @@ def _validate_policy_rules(db, invoice_doc: Dict[str, Any]) -> List[Dict[str, An
 
 def _validate_duplicate_rules(db, invoice_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    Validate DUPLICATE rules: Risk protection against duplicates.
+    Validate DUPLICATE rules: Risk protection against duplicates and suspicious patterns.
     
     DUPLICATE rules protect against duplicate or risky invoices.
-    Severity is usually HARD (risk protection).
+    Severity depends on the specific risk: HARD (blocking) or SOFT (warning).
+    
+    Includes:
+    - E4-D1: Exact duplicate (same vendor + same invoice number)
+    - E4-D2: Time-window duplicate (same vendor + same amount within 30 days)
+    - E4-D3: Similar amount heuristic (±2% within 60 days, different number)
     
     Returns:
         List of duplicate validation issues
     """
     issues: List[Dict[str, Any]] = []
+    header = invoice_doc.get("header", {})
+    invoice_id = invoice_doc.get("_id")
     
-    # Currently no duplicate rules implemented
-    # Future: Check for same vendor + invoice number, time-window duplicates, etc.
+    vendor_id = header.get("vendor_number")
+    invoice_number = header.get("invoice_number")
+    total_amount = header.get("total_amount")
+    
+    if not vendor_id or not invoice_number:
+        # Cannot perform duplicate checks without vendor and invoice number
+        return issues
+    
+    invoices_collection = db.get_collection("invoices")
+    
+    # ==================== E4-D1: Exact Duplicate Invoice ====================
+    # Same vendor + same invoice number = exact duplicate
+    # HARD severity: blocking risk
+    try:
+        exact_dup = invoices_collection.find_one({
+            "header.vendor_number": vendor_id,
+            "header.invoice_number": invoice_number,
+            "_id": {"$ne": invoice_id}  # Exclude current invoice
+        })
+        
+        if exact_dup:
+            issues.append({
+                "code": "DUPLICATE_INVOICE_EXACT",
+                "category": "DUPLICATE",
+                "severity": "HARD",
+                "field": "header.invoice_number",
+                "message": "Duplicate invoice detected for this vendor",
+                "metadata": {
+                    "vendor_id": vendor_id,
+                    "invoice_number": invoice_number,
+                    "existing_invoice_id": str(exact_dup.get("_id", "unknown"))
+                }
+            })
+    except Exception as e:
+        # Database error - don't fail validation, just skip this check
+        pass
+    
+    # ==================== E4-D2: Time-Window Duplicate (Same Amount) ====================
+    # Same vendor + same total amount within 30 days = potential duplicate
+    # SOFT severity: warning only
+    if total_amount:
+        try:
+            invoice_date_str = header.get("invoice_date")
+            if invoice_date_str:
+                # Parse invoice date
+                try:
+                    if isinstance(invoice_date_str, str):
+                        if "T" in invoice_date_str:
+                            invoice_date = datetime.datetime.fromisoformat(
+                                invoice_date_str.replace("Z", "+00:00")
+                            )
+                        else:
+                            invoice_date = datetime.datetime.strptime(invoice_date_str, "%Y-%m-%d")
+                    else:
+                        invoice_date = invoice_date_str
+                    
+                    # Check 30 days back
+                    window_start = invoice_date - datetime.timedelta(days=30)
+                    
+                    time_window_dup = invoices_collection.find_one({
+                        "header.vendor_number": vendor_id,
+                        "header.total_amount": total_amount,
+                        "header.invoice_number": {"$ne": invoice_number},
+                        "_id": {"$ne": invoice_id},
+                        "header.invoice_date": {
+                            "$gte": window_start.isoformat() if hasattr(window_start, 'isoformat') else str(window_start),
+                            "$lte": invoice_date_str
+                        }
+                    })
+                    
+                    if time_window_dup:
+                        issues.append({
+                            "code": "DUPLICATE_INVOICE_TIME_WINDOW",
+                            "category": "DUPLICATE",
+                            "severity": "SOFT",
+                            "field": "header.total_amount",
+                            "message": "Similar invoice amount detected within recent time window",
+                            "metadata": {
+                                "vendor_id": vendor_id,
+                                "total_amount": total_amount,
+                                "window_days": 30,
+                                "existing_invoice_id": str(time_window_dup.get("_id", "unknown")),
+                                "existing_invoice_number": time_window_dup.get("header", {}).get("invoice_number")
+                            }
+                        })
+                except (ValueError, TypeError):
+                    # Could not parse date - skip this check
+                    pass
+        except Exception as e:
+            # Database error - skip this check
+            pass
+    
+    # ==================== E4-D3: Similar Amount Heuristic (±2%) ====================
+    # Same vendor + amount within ±2% in last 60 days = suspicious pattern
+    # SOFT severity: warning only
+    if total_amount:
+        try:
+            invoice_date_str = header.get("invoice_date")
+            if invoice_date_str:
+                try:
+                    if isinstance(invoice_date_str, str):
+                        if "T" in invoice_date_str:
+                            invoice_date = datetime.datetime.fromisoformat(
+                                invoice_date_str.replace("Z", "+00:00")
+                            )
+                        else:
+                            invoice_date = datetime.datetime.strptime(invoice_date_str, "%Y-%m-%d")
+                    else:
+                        invoice_date = invoice_date_str
+                    
+                    # Check 60 days back
+                    window_start = invoice_date - datetime.timedelta(days=60)
+                    
+                    # Calculate ±2% tolerance
+                    tolerance_pct = 0.02  # 2%
+                    lower_bound = float(total_amount) * (1 - tolerance_pct)
+                    upper_bound = float(total_amount) * (1 + tolerance_pct)
+                    
+                    similar_amount_dup = invoices_collection.find_one({
+                        "header.vendor_number": vendor_id,
+                        "header.total_amount": {
+                            "$gte": lower_bound,
+                            "$lte": upper_bound
+                        },
+                        "header.invoice_number": {"$ne": invoice_number},
+                        "_id": {"$ne": invoice_id},
+                        "header.invoice_date": {
+                            "$gte": window_start.isoformat() if hasattr(window_start, 'isoformat') else str(window_start),
+                            "$lte": invoice_date_str
+                        }
+                    })
+                    
+                    if similar_amount_dup:
+                        existing_amount = similar_amount_dup.get("header", {}).get("total_amount")
+                        # Calculate percentage difference
+                        pct_diff = abs(float(total_amount) - float(existing_amount)) / float(total_amount) * 100
+                        
+                        issues.append({
+                            "code": "SIMILAR_INVOICE_AMOUNT",
+                            "category": "DUPLICATE",
+                            "severity": "SOFT",
+                            "field": "header.total_amount",
+                            "message": "Invoice amount closely matches recent invoice",
+                            "metadata": {
+                                "vendor_id": vendor_id,
+                                "current_amount": float(total_amount),
+                                "similar_amount": float(existing_amount),
+                                "pct_difference": round(pct_diff, 2),
+                                "tolerance_pct": tolerance_pct * 100,
+                                "window_days": 60,
+                                "existing_invoice_id": str(similar_amount_dup.get("_id", "unknown")),
+                                "existing_invoice_number": similar_amount_dup.get("header", {}).get("invoice_number")
+                            }
+                        })
+                except (ValueError, TypeError):
+                    # Could not parse date - skip this check
+                    pass
+        except Exception as e:
+            # Database error - skip this check
+            pass
     
     return issues
 
