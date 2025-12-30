@@ -5,7 +5,11 @@ from typing import Dict, Any, List
 from app.agents._common import ensure_agent_response
 
 # tolerance in percent (e.g. 0.5 = 0.5%)
+# Amount mismatches within this tolerance are SOFT warnings
 AMOUNT_TOLERANCE_PCT = float(os.environ.get("VALIDATION_AMOUNT_TOLERANCE_PCT", "0.5"))
+
+# Soft warning threshold: issues within 2x the tolerance are warnings, beyond that are failures
+AMOUNT_WARNING_THRESHOLD_PCT = float(os.environ.get("VALIDATION_AMOUNT_WARNING_THRESHOLD_PCT", "2.0"))
 
 
 def _build_validation_result(issues: List[Dict[str, Any]], validated_at: str) -> Dict[str, Any]:
@@ -90,6 +94,8 @@ def run_validation(db, invoice_doc: Dict[str, Any]) -> Dict[str, Any]:
         })
 
     # Amount vs lines sum (robust header amount parsing)
+    # FINANCIAL validation: internal numerical consistency
+    # Severity: SOFT if within warning threshold, HARD if beyond
     header_amount = header.get("total_amount")
     try:
         header_amount = float(header_amount) if header_amount is not None else 0.0
@@ -104,17 +110,22 @@ def run_validation(db, invoice_doc: Dict[str, Any]) -> Dict[str, Any]:
         if sum_items != 0:
             diff_pct = 100.0
 
+    # Check for amount mismatch and determine severity based on tolerance
     if diff_pct > AMOUNT_TOLERANCE_PCT:
+        # Determine severity: SOFT if within warning threshold, HARD if beyond
+        severity = "SOFT" if diff_pct <= AMOUNT_WARNING_THRESHOLD_PCT else "HARD"
         issues.append({
             "code": "AMOUNT_MISMATCH",
             "category": "FINANCIAL",
-            "severity": "HARD",
+            "severity": severity,
             "field": "header.total_amount",
-            "message": f"Header total_amount {header_amount} != sum(lines) {sum_items} (diff_pct={diff_pct:.2f} > tol={AMOUNT_TOLERANCE_PCT})",
+            "message": f"Header total_amount {header_amount} != sum(lines) {sum_items} (diff_pct={diff_pct:.2f})",
             "metadata": {
                 "header_amount": header_amount,
                 "sum_items": sum_items,
-                "diff_pct": round(diff_pct, 2)
+                "diff_pct": round(diff_pct, 2),
+                "tolerance_pct": AMOUNT_TOLERANCE_PCT,
+                "warning_threshold_pct": AMOUNT_WARNING_THRESHOLD_PCT
             }
         })
 
