@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { Upload, Trash2, Shuffle, Send, CheckCircle, XCircle, Clock, AlertCircle, Zap, GitBranch, FileText, Wifi, WifiOff } from "lucide-react";
+import { NegativeScenariosAccordion } from "../components/NegativeScenariosAccordion";
+import { applyNegativeScenarios } from "../lib/invoice-scenarios";
 
 const BACKEND = (import.meta.env.VITE_BACKEND_URL || "").replace(/\/$/, "") || "https://invoice-poc-1gpt.onrender.com";
 
@@ -189,23 +191,13 @@ export default function SubmitInvoice() {
   const [loadingGen, setLoadingGen] = useState(false);
   const [loadingSubmit, setLoadingSubmit] = useState(false);
 
-  // Schema-level failures
-  const [missMandatory, setMissMandatory] = useState(false);
-  const [missingDocImage, setMissingDocImage] = useState(false);
-  const [emptyLineItems, setEmptyLineItems] = useState(false);
-  const [invalidDateFormat, setInvalidDateFormat] = useState(false);
-
-  // ValidationAgent failures
-  const [headerTotalMismatch, setHeaderTotalMismatch] = useState(false);
-  const [zeroQuantityLine, setZeroQuantityLine] = useState(false);
-
-  // Matching/Coding failures
-  const [unknownVendor, setUnknownVendor] = useState(false);
-  const [nonPoNoCodingHint, setNonPoNoCodingHint] = useState(false);
-
-  // Legacy toggles (kept for backward compatibility)
-  const [badVendor, setBadVendor] = useState(false);
-  const [badPO, setBadPO] = useState(false);
+  // Negative scenarios organized by category (Step E8)
+  const [negativeScenarios, setNegativeScenarios] = useState({
+    STRUCTURAL: [],
+    FINANCIAL: [],
+    POLICY: [],
+    DUPLICATE: []
+  });
 
   const [lastInvoiceId, setLastInvoiceId] = useState(null);
 
@@ -226,74 +218,20 @@ export default function SubmitInvoice() {
         return;
       }
       const generated = data?.generated_invoice || data || {};
-      const mutated = JSON.parse(JSON.stringify(generated));
-
-      // SCHEMA-LEVEL FAILURES
-      if (missMandatory) {
-        if (mutated.header) {
-          delete mutated.header.invoice_number;
-        }
-      }
-
-      if (missingDocImage) {
-        if (mutated.document) {
-          delete mutated.document.image_url;
-        }
-      }
-
-      if (emptyLineItems) {
-        mutated.lines = [];
-      }
-
-      if (invalidDateFormat) {
-        if (mutated.header) {
-          mutated.header.invoice_date = "invalid-date";
-        }
-      }
-
-      // VALIDATIONAGENT FAILURES
-      if (headerTotalMismatch) {
-        if (mutated.header && mutated.lines) {
-          const lineSum = mutated.lines.reduce((sum, ln) => sum + (ln.line_amount || 0), 0);
-          mutated.header.total_amount = lineSum + 999.99; // Intentional mismatch
-        }
-      }
-
-      if (zeroQuantityLine) {
-        if (mutated.lines && mutated.lines.length > 0) {
-          mutated.lines[0].quantity = 0;
-        }
-      }
-
-      // MATCHING/CODING FAILURES
-      if (unknownVendor) {
-        if (mutated.header) {
-          mutated.header.vendor_name = "NonExistent Vendor #9999";
-        }
-      }
-
-      if (nonPoNoCodingHint && mode === "nonpo") {
-        // For non-PO invoices, remove any coding hints (description becomes generic)
-        if (mutated.lines) {
-          mutated.lines.forEach(ln => {
-            ln.description = "Item";
-          });
-        }
-      }
-
-      // LEGACY TOGGLES (for backward compatibility)
-      if (badVendor) {
-        if (mutated.header) {
-          mutated.header.vendor_name = "NonExistent Vendor #9999";
-        }
-      }
-
-      if (badPO) {
-        mutated.lines = [];
-      }
+      
+      // Apply negative scenarios (Step E8)
+      const mutated = applyNegativeScenarios(generated, negativeScenarios);
 
       setJsonText(JSON.stringify(mutated, null, 2));
-      setStatusMsg({ type: "success", text: `Generated invoice (${mode === "po" ? "PO-based" : "Non-PO"})` });
+      
+      const scenarioCount = 
+        negativeScenarios.STRUCTURAL.length +
+        negativeScenarios.FINANCIAL.length +
+        negativeScenarios.POLICY.length +
+        negativeScenarios.DUPLICATE.length;
+      
+      const scenarioText = scenarioCount > 0 ? ` with ${scenarioCount} scenarios` : '';
+      setStatusMsg({ type: "success", text: `Generated invoice (${mode === "po" ? "PO-based" : "Non-PO"})${scenarioText}` });
     } catch (err) {
       console.error(err);
       setStatusMsg({ type: "error", text: `Error generating invoice: ${err?.message || JSON.stringify(err)}` });
@@ -405,95 +343,10 @@ export default function SubmitInvoice() {
 
             {/* Test Scenarios */}
             <div className="space-y-4">
-              <label className="block text-sm font-medium text-slate-700">Test Scenarios</label>
-
-              {/* Schema-level failures */}
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 space-y-3">
-                <h4 className="text-xs font-semibold text-red-900 uppercase">Schema-Level Failures</h4>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={missMandatory}
-                    onChange={(e) => setMissMandatory(e.target.checked)}
-                    className="w-4 h-4 text-red-600 rounded"
-                  />
-                  <span className="text-sm text-slate-700">Missing invoice_number (Schema error)</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={missingDocImage}
-                    onChange={(e) => setMissingDocImage(e.target.checked)}
-                    className="w-4 h-4 text-red-600 rounded"
-                  />
-                  <span className="text-sm text-slate-700">Missing document image (Schema error)</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={emptyLineItems}
-                    onChange={(e) => setEmptyLineItems(e.target.checked)}
-                    className="w-4 h-4 text-red-600 rounded"
-                  />
-                  <span className="text-sm text-slate-700">Empty line items (Schema error)</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={invalidDateFormat}
-                    onChange={(e) => setInvalidDateFormat(e.target.checked)}
-                    className="w-4 h-4 text-red-600 rounded"
-                  />
-                  <span className="text-sm text-slate-700">Invalid invoice date format (Schema error)</span>
-                </label>
-              </div>
-
-              {/* ValidationAgent failures */}
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3">
-                <h4 className="text-xs font-semibold text-amber-900 uppercase">ValidationAgent Failures</h4>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={headerTotalMismatch}
-                    onChange={(e) => setHeaderTotalMismatch(e.target.checked)}
-                    className="w-4 h-4 text-amber-600 rounded"
-                  />
-                  <span className="text-sm text-slate-700">Header total mismatch (ValidationAgent error)</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={zeroQuantityLine}
-                    onChange={(e) => setZeroQuantityLine(e.target.checked)}
-                    className="w-4 h-4 text-amber-600 rounded"
-                  />
-                  <span className="text-sm text-slate-700">Zero quantity line (ValidationAgent error)</span>
-                </label>
-              </div>
-
-              {/* Matching/Coding failures */}
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
-                <h4 className="text-xs font-semibold text-blue-900 uppercase">Matching / Coding Failures</h4>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={unknownVendor}
-                    onChange={(e) => setUnknownVendor(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 rounded"
-                  />
-                  <span className="text-sm text-slate-700">Unknown vendor (ValidationAgent error)</span>
-                </label>
-                <label className={`flex items-center gap-2 cursor-pointer ${mode === "po" ? "opacity-50 cursor-not-allowed" : ""}`}>
-                  <input
-                    type="checkbox"
-                    checked={nonPoNoCodingHint}
-                    onChange={(e) => setNonPoNoCodingHint(e.target.checked)}
-                    disabled={mode === "po"}
-                    className="w-4 h-4 text-blue-600 rounded disabled:cursor-not-allowed"
-                  />
-                  <span className="text-sm text-slate-700">Non-PO without coding hint (Matching error)</span>
-                </label>
-              </div>
+              <NegativeScenariosAccordion 
+                value={negativeScenarios}
+                onChange={setNegativeScenarios}
+              />
             </div>
 
             {/* Invoice JSON */}
