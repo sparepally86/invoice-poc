@@ -1,6 +1,7 @@
 # app/orchestrator.py
 import asyncio
 import datetime
+from typing import Optional
 from app.logging_config import get_logger
 from app.storage.mongo_client import get_db
 from app.agents.validation import run_validation
@@ -77,13 +78,21 @@ def _append_explain_step_to_invoice(db, invoice_id: str, explain_step: dict):
         logger.exception("Failed to persist ExplainAgent step for invoice %s", invoice_id)
 
 
-def _safe_run_explain_and_persist(db, invoice_id: str, invoice_snapshot: dict, trigger_step: dict) -> bool:
+def _safe_run_explain_and_persist(db, invoice_id: str, invoice_snapshot: dict, trigger_step: dict, validation_result: Optional[dict] = None) -> bool:
     """
     Run run_explain synchronously and persist either the explain step or an error step
     into the invoice workflow so failures are visible (especially in prod).
+    
+    Args:
+        db: MongoDB client
+        invoice_id: Invoice ID
+        invoice_snapshot: Invoice document snapshot
+        trigger_step: Triggering step (e.g., POMatchingAgent output)
+        validation_result: Optional ValidationResult dict from invoice.validation (NEW in Step G)
     """
     try:
-        explain_resp = run_explain(db, invoice_snapshot, trigger_step)
+        # Step G: Pass validation_result to ExplainAgent for grounding
+        explain_resp = run_explain(db, invoice_snapshot, trigger_step, validation_result=validation_result)
         if isinstance(explain_resp, dict):
             if "timestamp" not in explain_resp:
                 explain_resp["timestamp"] = datetime.datetime.utcnow().isoformat() + "Z"
@@ -217,7 +226,9 @@ async def process_task(task):
             # If PO matching produced issues (partial_match), create a human_review task
             if po_out.get("status") != "matched":
                 # BEFORE creating the human task for PO mismatch, run ExplainAgent and persist success or failure
-                await asyncio.to_thread(_safe_run_explain_and_persist, db, invoice_id, invoice, po_out)
+                # Step G: Pass validation_result if available
+                validation_result = invoice.get("validation") if invoice else None
+                await asyncio.to_thread(_safe_run_explain_and_persist, db, invoice_id, invoice, po_out, validation_result)
 
                 now = datetime.datetime.utcnow().isoformat() + "Z"
                 human_task = {

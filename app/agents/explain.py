@@ -103,6 +103,57 @@ def _extract_validation_results(triggering_step: Dict[str, Any]) -> str:
     return str(result)[:500] if result else "Validation triggered without specific details."
 
 
+def _extract_validation_result_from_dict(validation_result: Dict[str, Any]) -> str:
+    """
+    Extract validation results directly from ValidationResult dict (not triggering_step).
+    This is the NEW method used in Step G for grounded explanations.
+    
+    Args:
+        validation_result: ValidationResult dict with structure:
+            {
+              "status": "PASS" | "WARN" | "FAIL",
+              "issues": [...],
+              "summary": {...}
+            }
+    
+    Returns:
+        Formatted string of validation issues for inclusion in LLM prompt
+    """
+    if not validation_result:
+        return "No validation details available."
+    
+    if not isinstance(validation_result, dict):
+        return str(validation_result)[:500]
+    
+    issues = validation_result.get("issues", [])
+    summary = validation_result.get("summary", {})
+    
+    parts = []
+    parts.append(f"Validation Status: {validation_result.get('status', 'UNKNOWN')}")
+    
+    if summary:
+        hard_failures = summary.get("hard_failures", 0)
+        soft_warnings = summary.get("soft_warnings", 0)
+        if hard_failures > 0:
+            parts.append(f"Hard Failures: {hard_failures}")
+        if soft_warnings > 0:
+            parts.append(f"Soft Warnings: {soft_warnings}")
+    
+    if issues:
+        parts.append(f"\nIssues ({len(issues)} total):")
+        for issue in issues[:10]:  # Limit to first 10 issues
+            code = issue.get("code", "UNKNOWN")
+            category = issue.get("category", "UNKNOWN")
+            severity = issue.get("severity", "UNKNOWN")
+            message = issue.get("message", "No message")[:100]
+            field = issue.get("field", "")
+            
+            field_str = f" [{field}]" if field else ""
+            parts.append(f"  - {code} ({category}/{severity}){field_str}: {message}")
+    
+    return "\n".join(parts)
+
+
 def _format_retrieved_evidence(retrieval_hits: List[Dict[str, Any]], k: int = 3) -> str:
     """
     Format retrieved evidence for the RAG prompt.
@@ -214,25 +265,169 @@ def _make_agent_response(
     return agent_resp
 
 
+def _generate_grounded_explanations(
+    llm,
+    invoice: Dict[str, Any],
+    validation_result: Dict[str, Any],
+    retrieval_hits: List[Dict[str, Any]],
+    rate_limiter,
+    redacted_by: Optional[str] = None
+) -> tuple[List[Dict[str, Any]], Optional[int], Optional[Dict[str, Any]]]:
+    """
+    Generate LLM-based explanations for each validation issue.
+    
+    Step G implementation: Ground explanations directly on validation issues.
+    - Iterates over validation_result.issues
+    - For each issue, generates a specific explanation tied to that issue
+    - Returns issue_explanations array + optional latency_ms + telemetry dict
+    
+    Args:
+        llm: LLM client instance
+        invoice: Invoice document
+        validation_result: ValidationResult dict with status, issues[], summary
+        retrieval_hits: Retrieved similar cases from knowledge base
+        rate_limiter: Rate limiter instance
+        redacted_by: Optional string describing what was redacted
+    
+    Returns:
+        Tuple of (issue_explanations, latency_ms, telemetry_dict)
+        - issue_explanations: List of dicts with:
+            {
+              "rule_code": "...",
+              "category": "...",
+              "severity": "...",
+              "explanation": "..."
+            }
+        - latency_ms: Total wall-clock latency or None if skipped/failed
+        - telemetry_dict: Optional telemetry object
+    """
+    issue_explanations = []
+    if not validation_result or not validation_result.get("issues"):
+        return issue_explanations, None, None
+    
+    issues = validation_result.get("issues", [])
+    context = _extract_invoice_context(invoice)
+    evidence = _format_retrieved_evidence(retrieval_hits, k=3)
+    
+    total_latency_ms = 0
+    telemetry_dict = None
+    
+    # Rate limiting check
+    if rate_limiter and not rate_limiter.is_allowed():
+        logger.warning("ExplainAgent rate-limited; skipping grounded explanations")
+        return issue_explanations, None, None
+    
+    for issue_index, issue in enumerate(issues):
+        rule_code = issue.get("code", "UNKNOWN")
+        category = issue.get("category", "UNKNOWN")
+        severity = issue.get("severity", "UNKNOWN")
+        field = issue.get("field", "")
+        message = issue.get("message", "")
+        
+        # Build prompt for this specific issue
+        issue_user_message = f"""Invoice Context:
+{context}
+
+Validation Issue:
+Rule: {rule_code} ({category}/{severity})
+Field: {field}
+Message: {message}
+
+{evidence}
+
+Task: In 1-2 sentences, explain this specific validation issue. Reference the field name, explain why it's problematic, and suggest how to fix it. Be concrete and factual."""
+        
+        # Build full prompt
+        full_prompt = _build_combined_prompt(RAG_SYSTEM_MESSAGE, issue_user_message)
+        prompt_hash = hashlib.sha256(full_prompt.encode()).hexdigest()[:16]
+        
+        # Redact PII
+        redacted_prompt = redact_pii(full_prompt)
+        
+        # Call LLM with timing
+        llm_start_time = time.time()
+        try:
+            llm_resp = llm.call_llm(redacted_prompt, max_tokens=150, temperature=0.0)
+            latency_ms = int((time.time() - llm_start_time) * 1000)
+            total_latency_ms += latency_ms
+            
+            # Extract explanation text
+            explanation_text = ""
+            if isinstance(llm_resp, dict):
+                parsed = llm_resp.get("parsed")
+                if isinstance(parsed, dict) and parsed.get("raw"):
+                    explanation_text = parsed.get("raw")
+                else:
+                    explanation_text = llm_resp.get("text") or llm_resp.get("raw") or str(llm_resp)
+            else:
+                explanation_text = str(llm_resp)
+            
+            # Build issue explanation entry
+            issue_explanation = {
+                "rule_code": rule_code,
+                "category": category,
+                "severity": severity,
+                "explanation": explanation_text.strip()
+            }
+            issue_explanations.append(issue_explanation)
+            
+            logger.debug("[issue=%s] Generated explanation: %s", rule_code, explanation_text[:100])
+            
+        except Exception as e:
+            latency_ms = int((time.time() - llm_start_time) * 1000)
+            total_latency_ms += latency_ms
+            logger.exception("Failed to generate explanation for issue %s: %s", rule_code, str(e))
+            
+            # Still add entry with error message
+            issue_explanation = {
+                "rule_code": rule_code,
+                "category": category,
+                "severity": severity,
+                "explanation": f"[Unable to generate explanation: {str(e)}]"
+            }
+            issue_explanations.append(issue_explanation)
+    
+    # Build telemetry
+    if TELEMETRY_ENABLED:
+        telemetry_dict = {
+            "issue_explanations_generated": len(issue_explanations),
+            "total_latency_ms": total_latency_ms,
+            "issues_count": len(issues)
+        }
+    
+    return issue_explanations, total_latency_ms, telemetry_dict
+
+
 # -----------------------
 # run_explain (main)
 # -----------------------
-def run_explain(db: Any, invoice: Dict[str, Any], triggering_step: Dict[str, Any]) -> Dict[str, Any]:
+def run_explain(db: Any, invoice: Dict[str, Any], triggering_step: Dict[str, Any], validation_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     RAG-enabled ExplainAgent flow with retrieval, redaction, rate limiting and telemetry logging.
     
-    If RAG_ENABLED:
-        - Calls search_invoice() to retrieve similar prior cases
-        - Builds RAG prompt with system/user messages
-        - Grounds explanation in retrieved evidence + validation results
+    Step G (Grounding): 
+    - If validation_result provided, generates grounded explanations per validation issue
+    - Each explanation tied to a specific rule_code from ValidationResult.issues[]
+    - No hallucinated issues - only explains what ValidationResult contains
     
-    If RAG disabled:
-        - Skips retrieval
-        - Uses simpler prompt without retrieved evidence
+    Fallback (legacy):
+    - If validation_result not provided, falls back to old behavior with triggering_step
+    
+    Args:
+        db: MongoDB client
+        invoice: Invoice document
+        triggering_step: Original triggering step (for backward compatibility)
+        validation_result: ValidationResult dict with issues (NEW in Step G)
+    
+    Returns:
+        AgentResponse dict with:
+        - If grounding enabled: result.issue_explanations[] with rule_code, category, severity, explanation
+        - If legacy: result.explanation_text (single explanation)
     """
     llm = get_llm_client()
     model_name = getattr(llm, "model", "noop") or "noop"
     k = RETRIEVAL_K_DEFAULT
+    invoice_id = invoice.get("_id")
     
     # 1) RAG retrieval (if enabled)
     retrieval_hits: List[Dict[str, Any]] = []
@@ -242,7 +437,56 @@ def run_explain(db: Any, invoice: Dict[str, Any], triggering_step: Dict[str, Any
         except Exception:
             retrieval_hits = []
     
-    # 2) Build prompt based on RAG mode
+    # 2) NEW IN STEP G: Use validation_result if provided (grounded explanations)
+    if validation_result and isinstance(validation_result, dict) and validation_result.get("issues"):
+        logger.info("[invoice_id=%s] Using grounded explanation generator for %d issues", 
+                   invoice_id, len(validation_result.get("issues", [])))
+        
+        # Get rate limiter
+        rl = get_rate_limiter()
+        
+        # Generate grounded explanations per issue
+        issue_explanations, total_latency_ms, grounded_telemetry = _generate_grounded_explanations(
+            llm, invoice, validation_result, retrieval_hits, rl
+        )
+        
+        # Build overall summary from all explanations
+        overall_summary = f"Validation found {len(validation_result.get('issues', []))} issue(s):"
+        
+        # Build response with issue_explanations
+        now = _now_iso()
+        result = {
+            "overall_summary": overall_summary,
+            "issue_explanations": issue_explanations,
+            "sources": retrieval_hits
+        }
+        
+        ai_metadata = {
+            "retrieval_hits": retrieval_hits or [],
+            "model": model_name,
+            "grounding_enabled": True,
+            "issue_count": len(issue_explanations)
+        }
+        
+        if grounded_telemetry:
+            ai_metadata["telemetry"] = grounded_telemetry
+        
+        agent_response = {
+            "agent": AGENT_NAME,
+            "status": "completed",
+            "result": result,
+            "next_agent": None,
+            "score": 0.7,  # Higher score for grounded explanations
+            "timestamp": now,
+            "ai": ai_metadata
+        }
+        
+        return agent_response
+    
+    # 3) FALLBACK: Legacy behavior if no validation_result or validation_result is empty
+    logger.debug("[invoice_id=%s] Falling back to legacy explanation mode", invoice_id)
+    
+    # Build prompt based on RAG mode
     if RAG_ENABLED:
         user_message = _build_rag_user_message(invoice, triggering_step, retrieval_hits, k=k)
         prompt = _build_combined_prompt(RAG_SYSTEM_MESSAGE, user_message)
@@ -273,8 +517,7 @@ Task: In 1-3 sentences, explain why the system flagged this invoice. List explic
         logger.debug(f"ExplainAgent: No PII detected in prompt for invoice {invoice.get('_id')}. "
                     f"Prompt hash: {prompt_hash}")
 
-    # 3) Rate limiting
-    invoice_id = invoice.get("_id")
+    # 4) Rate limiting
     rl = get_rate_limiter()
     if not rl.allow_request(invoice_id=invoice_id):
         logger.warning(
@@ -320,7 +563,7 @@ Task: In 1-3 sentences, explain why the system flagged this invoice. List explic
             }
         }
 
-    # 4) Call LLM with latency measurement
+    # 5) Call LLM with latency measurement
     llm_start_time = time.time()
     latency_ms = None
     try:
@@ -355,7 +598,7 @@ Task: In 1-3 sentences, explain why the system flagged this invoice. List explic
         agent_response["status"] = "failed"
         return agent_response
 
-    # 5) Extract explanation text from LLM response
+    # 6) Extract explanation text from LLM response
     explanation_text = ""
     try:
         if isinstance(llm_resp, dict):
@@ -369,7 +612,7 @@ Task: In 1-3 sentences, explain why the system flagged this invoice. List explic
     except Exception:
         explanation_text = str(llm_resp)
 
-    # 6) Extract token usage (prefer provider-provided usage)
+    # 7) Extract token usage (prefer provider-provided usage)
     tokens: Optional[Dict[str, int]] = None
     try:
         if isinstance(llm_resp, dict):
@@ -385,7 +628,7 @@ Task: In 1-3 sentences, explain why the system flagged this invoice. List explic
     except Exception:
         tokens = {"prompt": len(redacted_prompt) // 4, "completion": 0}
 
-    # 7) Build telemetry dict for workflow step (if TELEMETRY_WRITE=true)
+    # 8) Build telemetry dict for workflow step (if TELEMETRY_WRITE=true)
     telemetry_dict: Optional[Dict[str, Any]] = None
     if TELEMETRY_ENABLED:
         try:
@@ -414,7 +657,7 @@ Task: In 1-3 sentences, explain why the system flagged this invoice. List explic
             # Telemetry is optional; don't break if it fails
             telemetry_dict = None
 
-    # 8) Persist telemetry to DB (best-effort, legacy location)
+    # 9) Persist telemetry to DB (best-effort, legacy location)
     try:
         telemetry = {
             "agent": AGENT_NAME,
@@ -434,7 +677,7 @@ Task: In 1-3 sentences, explain why the system flagged this invoice. List explic
     except Exception:
         pass
 
-    # 9) Build response with proper metadata including new telemetry
+    # 10) Build response with proper metadata including new telemetry
     agent_response = _make_agent_response(
         explanation_text, retrieval_hits, prompt_hash, model_name, 
         tokens=tokens, latency_ms=latency_ms, telemetry=telemetry_dict
