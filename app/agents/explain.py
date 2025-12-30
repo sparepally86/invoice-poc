@@ -50,11 +50,13 @@ def _extract_invoice_context(invoice: Dict[str, Any]) -> str:
     """
     Extract a short summary of invoice context for the RAG prompt.
     Includes: vendor, amount, PO/non-PO status.
+    Uses internal invoice ID (_id), not vendor's invoice number.
     """
     header = invoice.get("header", {}) or {}
     parts = []
     
-    invoice_ref = header.get("invoice_ref") or header.get("invoice_number") or invoice.get("_id", "unknown")
+    # Use internal invoice ID first (most important); fall back to vendor's invoice_number only if no ID
+    invoice_ref = invoice.get("_id") or header.get("invoice_ref") or header.get("invoice_number") or "unknown"
     parts.append(f"Invoice: {invoice_ref}")
     
     vendor = header.get("vendor") or header.get("vendor_name") or header.get("supplier")
@@ -313,7 +315,8 @@ def _generate_grounded_explanations(
     telemetry_dict = None
     
     # Rate limiting check
-    if rate_limiter and not rate_limiter.is_allowed():
+    invoice_id = invoice.get("_id")
+    if rate_limiter and not rate_limiter.allow_request(invoice_id=invoice_id):
         logger.warning("ExplainAgent rate-limited; skipping grounded explanations")
         return issue_explanations, None, None
     

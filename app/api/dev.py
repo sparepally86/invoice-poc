@@ -128,6 +128,7 @@ async def generate_invoice(
                     "invoice_date": invoice_date,
                     "vendor_name": vendor_name,
                     "vendor_number": vendor_number,
+                    "po_number": po_doc.get("po_number"),
                     "currency": po_doc.get("currency", "INR"),
                     "total_amount": total_amount
                 },

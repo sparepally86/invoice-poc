@@ -139,10 +139,67 @@ export default function ExplanationPanel({ invoiceId }) {
 
       {explain && (
         <div style={{ marginTop: 8 }}>
-          <div style={{ marginBottom: 8, whiteSpace: "pre-wrap" }}>
-            <strong>Explanation:</strong>
-            <div style={{ marginTop: 6 }}>{explain.result && explain.result.explanation_text ? explain.result.explanation_text : String(explain)}</div>
-          </div>
+          {/* Grounded explanations (Step G) - per-issue format */}
+          {explain.result && explain.result.issue_explanations && explain.result.issue_explanations.length > 0 ? (
+            <div style={{ marginBottom: 12 }}>
+              {explain.result.overall_summary && (
+                <div style={{ marginBottom: 10, fontSize: 14, fontWeight: 500, color: "#374151" }}>
+                  {explain.result.overall_summary}
+                </div>
+              )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {explain.result.issue_explanations.map((issue, idx) => (
+                  <div 
+                    key={idx}
+                    style={{
+                      padding: 10,
+                      backgroundColor: issue.severity === "HARD" ? "#fef2f2" : "#fffbeb",
+                      border: issue.severity === "HARD" ? "1px solid #fecaca" : "1px solid #fde68a",
+                      borderRadius: 6
+                    }}
+                  >
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                      <span 
+                        style={{
+                          display: "inline-block",
+                          padding: "4px 10px",
+                          backgroundColor: "#e5e7eb",
+                          color: "#374151",
+                          borderRadius: 4,
+                          fontSize: 12,
+                          fontWeight: 600
+                        }}
+                      >
+                        {issue.rule_code}
+                      </span>
+                      <span 
+                        style={{
+                          display: "inline-block",
+                          padding: "4px 10px",
+                          backgroundColor: issue.severity === "HARD" ? "#fca5a5" : "#fbbf24",
+                          color: "#fff",
+                          borderRadius: 4,
+                          fontSize: 11,
+                          fontWeight: 500
+                        }}
+                      >
+                        {issue.category} • {issue.severity}
+                      </span>
+                    </div>
+                    <div style={{ color: "#374151", lineHeight: 1.5, fontSize: 13 }}>
+                      {issue.explanation}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            /* Legacy explanation_text format */
+            <div style={{ marginBottom: 8, whiteSpace: "pre-wrap" }}>
+              <strong>Explanation:</strong>
+              <div style={{ marginTop: 6 }}>{explain.result && explain.result.explanation_text ? explain.result.explanation_text : String(explain)}</div>
+            </div>
+          )}
 
           {explain.result && explain.result.evidence && explain.result.evidence.length > 0 && (
             <div style={{ marginTop: 8 }}>
