@@ -176,6 +176,11 @@ async def process_task(task):
         if validation_status == "FAIL":
             # FAIL: Stop orchestration immediately, move to EXCEPTION state
             logger.info("[task_id=%s invoice_id=%s] ValidationResult.status=FAIL: Stopping orchestration", task_id, invoice_id)
+            
+            # Step G: Generate grounded explanations for validation failures
+            logger.info("[task_id=%s invoice_id=%s] Generating grounded explanations for validation failures", task_id, invoice_id)
+            await asyncio.to_thread(_safe_run_explain_and_persist, db, invoice_id, invoice, validation_out, validation_result)
+            
             await asyncio.to_thread(update_invoice_status, db, invoice_id, "EXCEPTION", "Orchestrator", note="Validation failed - hard blocking issues detected")
             
             # Finish the original task
