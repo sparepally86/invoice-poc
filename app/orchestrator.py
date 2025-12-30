@@ -160,36 +160,40 @@ async def process_task(task):
             await asyncio.to_thread(db.invoices.update_one, {"_id": invoice_id}, {"$set": {"validation": validation_result}})
             logger.info("[task_id=%s invoice_id=%s] ValidationResult persisted: status=%s", task_id, invoice_id, validation_result.get("status"))
 
-        # compute status and set via helper
-        new_status = "VALIDATED" if validation_out.get("status") == "completed" else "EXCEPTION"
-        logger.info("[task_id=%s invoice_id=%s] ValidationAgent completed: status=%s", task_id, invoice_id, new_status)
-        await asyncio.to_thread(update_invoice_status, db, invoice_id, new_status, "Orchestrator", note="Validation result applied")
-
-        # If validation indicates human required (status not 'completed') -> create human task
-        if validation_out.get("status") != "completed":
-            # BEFORE creating the human task, run ExplainAgent and persist success or failure as a workflow step
-            await asyncio.to_thread(_safe_run_explain_and_persist, db, invoice_id, invoice, validation_out)
-
+        # === STEP D: ORCHESTRATOR BRANCHING ON VALIDATION RESULT STATUS ===
+        # Branch explicitly based on ValidationResult.status (PASS / WARN / FAIL)
+        validation_status = validation_result.get("status") if validation_result else "UNKNOWN"
+        
+        if validation_status == "FAIL":
+            # FAIL: Stop orchestration immediately, move to EXCEPTION state
+            logger.info("[task_id=%s invoice_id=%s] ValidationResult.status=FAIL: Stopping orchestration", task_id, invoice_id)
+            await asyncio.to_thread(update_invoice_status, db, invoice_id, "EXCEPTION", "Orchestrator", note="Validation failed - hard blocking issues detected")
+            
+            # Finish the original task
             now = datetime.datetime.utcnow().isoformat() + "Z"
-            human_task = {
-                "type": "human_review",
-                "invoice_id": invoice_id,
-                "status": "pending",
-                "created_at": now,
-                "payload": {
-                    "agent": validation_out.get("agent", "ValidationAgent"),
-                    "agent_result": validation_out.get("result", validation_out),
-                    "reason": "validation_failed_or_needs_human"
-                }
-            }
-            await asyncio.to_thread(db.tasks.insert_one, human_task)
-            human_task_created = True
-
-            # finish original task as done
             await asyncio.to_thread(db.tasks.update_one, {"_id": task["_id"]}, {"$set": {"status": "done", "finished_at": now}})
-
-            # We stop further processing for this invoice until human acts
+            
+            # Do NOT invoke MatchingAgent or any downstream agents
             return
+        
+        elif validation_status == "WARN":
+            # WARN: Continue to MatchingAgent but retain warnings in persisted data
+            logger.info("[task_id=%s invoice_id=%s] ValidationResult.status=WARN: Continuing with warnings", task_id, invoice_id)
+            # Set VALIDATED status but mark with warning note
+            await asyncio.to_thread(update_invoice_status, db, invoice_id, "VALIDATED", "Orchestrator", note="Validation passed with warnings")
+            # Continue to downstream agents (MatchingAgent, CodingAgent, etc.)
+        
+        elif validation_status == "PASS":
+            # PASS: Continue normally to MatchingAgent and downstream
+            logger.info("[task_id=%s invoice_id=%s] ValidationResult.status=PASS: Proceeding normally", task_id, invoice_id)
+            await asyncio.to_thread(update_invoice_status, db, invoice_id, "VALIDATED", "Orchestrator", note="Validation passed")
+            # Continue to downstream agents (MatchingAgent, CodingAgent, etc.)
+        
+        else:
+            # Unknown status - log and continue cautiously
+            logger.warning("[task_id=%s invoice_id=%s] Unknown ValidationResult.status=%s: Treating as PASS", task_id, invoice_id, validation_status)
+            await asyncio.to_thread(update_invoice_status, db, invoice_id, "VALIDATED", "Orchestrator", note="Validation passed (status unknown)")
+            # Continue to downstream agents
 
         # --- 2) PO Matching (only if validated) ---
         # re-fetch invoice in case validation added fields
