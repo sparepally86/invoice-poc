@@ -358,12 +358,21 @@ def _validate_policy_rules(db, invoice_doc: Dict[str, Any]) -> List[Dict[str, An
     POLICY rules enforce company and regulatory policies.
     Severity depends on the specific policy: HARD or SOFT.
     
+    Includes:
+    - Vendor eligibility (existing)
+    - E3-P1: Allowed currency validation
+    - E3-P2: Invoice date window validation
+    - E3-P3: High amount threshold warning
+    - E3-P4: Country-specific mandatory fields
+    
     Returns:
         List of policy validation issues
     """
     issues: List[Dict[str, Any]] = []
     header = invoice_doc.get("header", {})
+    lines = invoice_doc.get("lines", []) or []
     
+    # ==================== EXISTING RULE ====================
     # Vendor eligibility: Vendor must exist in master data
     vendor_id = header.get("vendor_number")
     vendor_ok = False
@@ -387,6 +396,134 @@ def _validate_policy_rules(db, invoice_doc: Dict[str, Any]) -> List[Dict[str, An
             "message": f"Vendor '{vendor_id}' not found in vendor master",
             "metadata": {}
         })
+    
+    # ==================== E3-P1: Allowed Currency Validation ====================
+    # Define allowed currencies (non-configurable in Step E3)
+    allowed_currencies = ["INR", "USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF"]
+    
+    currency = header.get("currency")
+    if currency and currency not in allowed_currencies:
+        issues.append({
+            "code": "UNSUPPORTED_CURRENCY",
+            "category": "POLICY",
+            "severity": "HARD",
+            "field": "header.currency",
+            "message": f"Invoice currency '{currency}' is not supported",
+            "metadata": {
+                "currency": currency,
+                "allowed_currencies": allowed_currencies
+            }
+        })
+    
+    # ==================== E3-P2: Invoice Date Window Validation ====================
+    invoice_date_str = header.get("invoice_date")
+    if invoice_date_str:
+        try:
+            # Parse ISO format date string
+            if isinstance(invoice_date_str, str):
+                # Try ISO format first
+                if "T" in invoice_date_str:
+                    invoice_date = datetime.datetime.fromisoformat(invoice_date_str.replace("Z", "+00:00")).date()
+                else:
+                    invoice_date = datetime.datetime.strptime(invoice_date_str, "%Y-%m-%d").date()
+            else:
+                invoice_date = invoice_date_str  # already a date object
+            
+            today = datetime.datetime.utcnow().date()
+            
+            # Check for future date (HARD)
+            if invoice_date > today:
+                issues.append({
+                    "code": "INVALID_INVOICE_DATE",
+                    "category": "POLICY",
+                    "severity": "HARD",
+                    "field": "header.invoice_date",
+                    "message": "Invoice date cannot be in the future",
+                    "metadata": {
+                        "invoice_date": str(invoice_date),
+                        "today": str(today),
+                        "days_in_future": (invoice_date - today).days
+                    }
+                })
+            else:
+                # Check if older than 180 days (SOFT)
+                days_old = (today - invoice_date).days
+                if days_old > 180:
+                    issues.append({
+                        "code": "INVALID_INVOICE_DATE",
+                        "category": "POLICY",
+                        "severity": "SOFT",
+                        "field": "header.invoice_date",
+                        "message": "Invoice date is older than allowed window (180 days)",
+                        "metadata": {
+                            "invoice_date": str(invoice_date),
+                            "today": str(today),
+                            "days_old": days_old,
+                            "max_allowed_days": 180
+                        }
+                    })
+        except (ValueError, TypeError) as e:
+            # Could not parse date - emit structural issue, not policy
+            # (this should be caught by structural rules)
+            pass
+    
+    # ==================== E3-P3: High Amount Threshold Warning ====================
+    # High-value invoices require additional attention (SOFT/WARN only)
+    high_amount_threshold = 1_000_000  # Non-configurable in Step E3
+    
+    total_amount = header.get("total_amount")
+    if total_amount:
+        try:
+            amount_val = float(total_amount)
+            if amount_val > high_amount_threshold:
+                issues.append({
+                    "code": "HIGH_VALUE_INVOICE",
+                    "category": "POLICY",
+                    "severity": "SOFT",
+                    "field": "header.total_amount",
+                    "message": "Invoice amount exceeds standard review threshold",
+                    "metadata": {
+                        "total_amount": amount_val,
+                        "threshold": high_amount_threshold,
+                        "exceeds_by": amount_val - high_amount_threshold
+                    }
+                })
+        except (ValueError, TypeError):
+            pass
+    
+    # ==================== E3-P4: Country-Specific Mandatory Fields ====================
+    country = header.get("country")
+    if country:
+        if country == "IN":
+            # India: GSTIN required
+            gstin = header.get("gstin")
+            if not gstin or gstin == "":
+                issues.append({
+                    "code": "MISSING_COUNTRY_MANDATORY_FIELD",
+                    "category": "POLICY",
+                    "severity": "HARD",
+                    "field": "header.country",
+                    "message": "Mandatory GSTIN field missing for India invoices",
+                    "metadata": {
+                        "country": country,
+                        "required_field": "gstin"
+                    }
+                })
+        elif country == "US":
+            # US: Tax ID required
+            tax_id = header.get("tax_id")
+            if not tax_id or tax_id == "":
+                issues.append({
+                    "code": "MISSING_COUNTRY_MANDATORY_FIELD",
+                    "category": "POLICY",
+                    "severity": "HARD",
+                    "field": "header.country",
+                    "message": "Mandatory Tax ID field missing for US invoices",
+                    "metadata": {
+                        "country": country,
+                        "required_field": "tax_id"
+                    }
+                })
     
     return issues
 
