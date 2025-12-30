@@ -17,7 +17,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.abspath('.'))
 
-from app.agents.validation import _build_validation_result
+from app.agents.validation_domain import build_validation_result
 
 def print_section(title):
     print("\n" + "="*80)
@@ -34,7 +34,7 @@ def print_result(validation_result):
 
 # PART 1: Valid Invoice (PASS)
 print_section("PART 1: Valid Invoice (PASS)")
-vr = _build_validation_result([], datetime.utcnow().isoformat() + "Z")
+vr = build_validation_result([], datetime.utcnow().isoformat() + "Z")
 print_result(vr)
 assert vr["status"] == "PASS"
 print("✓ Status is PASS as expected")
@@ -49,7 +49,7 @@ issues = [{
     "message": "invoice_number is missing",
     "metadata": {}
 }]
-vr = _build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
+vr = build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
 print_result(vr)
 print("\nIssue Details:")
 issue = vr["issues"][0]
@@ -72,7 +72,7 @@ issues = [{
     "message": "PO has been used in previous invoices",
     "metadata": {"previous_invoice_ids": ["INV-001", "INV-002"]}
 }]
-vr = _build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
+vr = build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
 print_result(vr)
 print("\nIssue Details:")
 issue = vr["issues"][0]
@@ -116,7 +116,7 @@ issues = [
         "metadata": {}
     }
 ]
-vr = _build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
+vr = build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
 print_result(vr)
 print("\nAll Issues:")
 for i, issue in enumerate(vr["issues"], 1):
@@ -177,7 +177,7 @@ issues = [
         }
     }
 ]
-vr = _build_validation_result(issues, validated_at)
+vr = build_validation_result(issues, validated_at)
 
 print("\nValidationResult Contract Specification:")
 print("""
@@ -241,7 +241,7 @@ old_format = {
 
 new_format = {
     **old_format,
-    "validation": _build_validation_result([], datetime.utcnow().isoformat() + "Z")
+    "validation": build_validation_result([], datetime.utcnow().isoformat() + "Z")
 }
 
 print("\nOld Format (preserved):")
@@ -267,7 +267,7 @@ issues = [{
     "message": "Generic validation error",
     "metadata": {}
 }]
-vr = _build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
+vr = build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
 assert vr["issues"][0]["field"] is None
 print("✓ Supports null field value")
 
@@ -287,7 +287,7 @@ issues = [{
         "suggested_header_amount": 2000.00
     }
 }]
-vr = _build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
+vr = build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
 assert len(vr["issues"][0]["metadata"]) == 6
 print("✓ Supports rich metadata with multiple fields")
 
@@ -300,7 +300,7 @@ issues = [{
     "message": "",
     "metadata": {}
 }]
-vr = _build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
+vr = build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
 print("✓ Handles empty messages gracefully")
 
 # FINAL SUMMARY

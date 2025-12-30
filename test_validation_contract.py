@@ -18,7 +18,7 @@ print("UNIT TEST: ValidationResult Contract Structure")
 print("="*80)
 
 # Test the _build_validation_result function directly
-from app.agents.validation import _build_validation_result
+from app.agents.validation_domain import build_validation_result
 
 # Test 1: No issues → PASS
 print("\n" + "="*80)
@@ -27,7 +27,7 @@ print("="*80)
 
 issues = []
 validated_at = datetime.utcnow().isoformat() + "Z"
-vr = _build_validation_result(issues, validated_at)
+vr = build_validation_result(issues, validated_at)
 
 print(f"Status: {vr['status']}")
 print(f"Issues: {vr['issues']}")
@@ -55,7 +55,7 @@ issues = [
         "metadata": {}
     }
 ]
-vr = _build_validation_result(issues, validated_at)
+vr = build_validation_result(issues, validated_at)
 
 print(f"Status: {vr['status']}")
 print(f"Issues: {len(vr['issues'])} issue(s)")
@@ -82,7 +82,7 @@ issues = [
         "metadata": {"previous_invoice_id": "INV-123"}
     }
 ]
-vr = _build_validation_result(issues, validated_at)
+vr = build_validation_result(issues, validated_at)
 
 print(f"Status: {vr['status']}")
 print(f"Issues: {len(vr['issues'])} issue(s)")
@@ -117,7 +117,7 @@ issues = [
         "metadata": {}
     }
 ]
-vr = _build_validation_result(issues, validated_at)
+vr = build_validation_result(issues, validated_at)
 
 print(f"Status: {vr['status']}")
 print(f"Issues: {len(vr['issues'])} issue(s)")
@@ -144,7 +144,7 @@ issues = [
         "metadata": {"search_term": "V999"}
     }
 ]
-vr = _build_validation_result(issues, validated_at)
+vr = build_validation_result(issues, validated_at)
 
 issue = vr["issues"][0]
 required_fields = ["code", "category", "severity", "field", "message", "metadata"]
@@ -172,7 +172,7 @@ print("="*80)
 
 issues = []
 validated_at = datetime.utcnow().isoformat() + "Z"
-vr = _build_validation_result(issues, validated_at)
+vr = build_validation_result(issues, validated_at)
 
 print(f"Timestamp: {vr['validated_at']}")
 assert vr['validated_at'].endswith('Z'), "Timestamp should end with Z (UTC)"

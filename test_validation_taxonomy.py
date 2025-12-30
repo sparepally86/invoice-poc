@@ -16,7 +16,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.abspath('.'))
 
-from app.agents.validation import _build_validation_result, AMOUNT_TOLERANCE_PCT, AMOUNT_WARNING_THRESHOLD_PCT
+from app.agents.validation import build_validation_result, AMOUNT_TOLERANCE_PCT, AMOUNT_WARNING_THRESHOLD_PCT
 
 print("\n" + "="*80)
 print("TEST: Validation Rule Taxonomy (Step B)")
@@ -38,7 +38,7 @@ issues = [
         "metadata": {}
     }
 ]
-vr = _build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
+vr = build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
 
 print(f"Issue: MISSING_FIELD")
 print(f"  Category: {issues[0]['category']}")
@@ -80,7 +80,7 @@ issues = [
         }
     }
 ]
-vr = _build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
+vr = build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
 
 print(f"  Category: {issues[0]['category']}")
 print(f"  Severity: {issues[0]['severity']}")
@@ -112,7 +112,7 @@ issues = [
         }
     }
 ]
-vr = _build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
+vr = build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
 
 print(f"  Category: {issues[0]['category']}")
 print(f"  Severity: {issues[0]['severity']}")
@@ -143,7 +143,7 @@ issues = [
         "metadata": {}
     }
 ]
-vr = _build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
+vr = build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
 
 print(f"Issue: VENDOR_NOT_FOUND")
 print(f"  Category: {issues[0]['category']}")
@@ -187,7 +187,7 @@ issues = [
         "metadata": {}
     }
 ]
-vr = _build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
+vr = build_validation_result(issues, datetime.utcnow().isoformat() + "Z")
 
 print(f"Issues: {len(vr['issues'])}")
 print(f"  - STRUCTURAL (HARD): MISSING_FIELD")
