@@ -59,6 +59,48 @@ def close_client():
         _client = None
 
 
+def ensure_indexes():
+    """
+    Create necessary indexes for MongoDB collections.
+    Called during application startup.
+    """
+    db = get_db()
+    
+    # Indexes for validation_config collection
+    validation_config = db.validation_config
+    
+    # Primary index: unique constraint on org_id + region + rule_id
+    validation_config.create_index([
+        ("organization_id", 1),
+        ("region", 1),
+        ("rule_id", 1)
+    ], unique=True, sparse=False)
+    
+    # Index for retrieving active configs
+    validation_config.create_index([
+        ("organization_id", 1),
+        ("enabled", 1)
+    ])
+    
+    # Index for category-based queries
+    validation_config.create_index([
+        ("rule_category", 1),
+        ("organization_id", 1)
+    ])
+    
+    # Index for audit trail queries (change history)
+    validation_config.create_index([
+        ("updated_at", -1)
+    ])
+
+
+def close_client():
+    global _client
+    if _client:
+        _client.close()
+        _client = None
+
+
 def get_next_invoice_id() -> int:
     """
     Atomically generate the next sequential invoice_id using MongoDB counters collection.

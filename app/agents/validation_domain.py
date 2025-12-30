@@ -7,19 +7,24 @@ Responsibilities:
 - Aggregate issues from all rule groups
 - Compute final ValidationResult (status, summary)
 - Remain deterministic and synchronous
+- Support configuration service for dynamic rule parameters
 
 This module is internal to ValidationAgent and should not be called directly by Orchestrator.
 """
 
 import os
 import datetime
-from typing import Dict, Any, List
+import logging
+from typing import Dict, Any, List, Optional
+from app.services.config_service import ConfigurationService
 
-# tolerance in percent (e.g. 0.5 = 0.5%)
-AMOUNT_TOLERANCE_PCT = float(os.environ.get("VALIDATION_AMOUNT_TOLERANCE_PCT", "0.5"))
+logger = logging.getLogger(__name__)
 
-# Soft warning threshold: issues within 2x the tolerance are warnings, beyond that are failures
-AMOUNT_WARNING_THRESHOLD_PCT = float(os.environ.get("VALIDATION_AMOUNT_WARNING_THRESHOLD_PCT", "2.0"))
+# Default tolerance in percent (e.g. 0.5 = 0.5%) - used as fallback
+DEFAULT_AMOUNT_TOLERANCE_PCT = float(os.environ.get("VALIDATION_AMOUNT_TOLERANCE_PCT", "0.5"))
+
+# Default soft warning threshold (used as fallback)
+DEFAULT_AMOUNT_WARNING_THRESHOLD_PCT = float(os.environ.get("VALIDATION_AMOUNT_WARNING_THRESHOLD_PCT", "2.0"))
 
 
 def _validate_structural_rules(invoice_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -159,16 +164,27 @@ def _validate_structural_rules(invoice_doc: Dict[str, Any]) -> List[Dict[str, An
     return issues
 
 
-def _validate_financial_rules(invoice_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _validate_financial_rules(
+    invoice_doc: Dict[str, Any],
+    config_service: Optional[ConfigurationService] = None,
+    org_id: str = "DEFAULT",
+    region: str = "US"
+) -> List[Dict[str, Any]]:
     """
     Validate FINANCIAL rules: Internal numerical consistency.
     
     FINANCIAL rules validate amounts and consistency.
     Includes:
-    - E2-F1: Header total vs line sum mismatch (tolerance-based, $1.00 fixed)
-    - E2-F2: Tax total consistency (tolerance-based, $1.00 fixed)
+    - E2-F1: Header total vs line sum mismatch (tolerance-based, $1.00 default)
+    - E2-F2: Tax total consistency (tolerance-based, $1.00 default)
     - E2-F3: Discount math validation (always SOFT)
     - E2-F4: Credit memo sign validation (always HARD)
+    
+    Args:
+        invoice_doc: Invoice document to validate
+        config_service: Optional ConfigurationService for dynamic parameters
+        org_id: Organization ID for configuration
+        region: Region for configuration
     
     Returns:
         List of financial validation issues
@@ -177,8 +193,21 @@ def _validate_financial_rules(invoice_doc: Dict[str, Any]) -> List[Dict[str, Any
     header = invoice_doc.get("header", {})
     lines = invoice_doc.get("lines", []) or []
     
-    # Fixed tolerance for E2 rules: $1.00 absolute difference
-    ABSOLUTE_TOLERANCE = 1.00
+    # Get tolerance from config service or use hardcoded default
+    # E2-F1 uses $1.00 fixed tolerance (stored as cents)
+    if config_service:
+        try:
+            e2f1_config = config_service.get_rule_config(org_id, "E2-F1", region) if hasattr(config_service, 'get_rule_config') else None
+        except:
+            e2f1_config = None
+    else:
+        e2f1_config = None
+    
+    ABSOLUTE_TOLERANCE = 1.00  # $1.00 fixed tolerance
+    if e2f1_config and "parameters" in e2f1_config:
+        params = e2f1_config.get("parameters", {})
+        if "tolerance_amount_cents" in params:
+            ABSOLUTE_TOLERANCE = params["tolerance_amount_cents"] / 100.0
     
     # === E2-F1: Header Total vs Line Sum Mismatch ===
     # Header total must equal sum of line amounts within $1.00 tolerance
@@ -351,7 +380,13 @@ def _validate_financial_rules(invoice_doc: Dict[str, Any]) -> List[Dict[str, Any
     return issues
 
 
-def _validate_policy_rules(db, invoice_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _validate_policy_rules(
+    db,
+    invoice_doc: Dict[str, Any],
+    config_service: Optional[ConfigurationService] = None,
+    org_id: str = "DEFAULT",
+    region: str = "US"
+) -> List[Dict[str, Any]]:
     """
     Validate POLICY rules: Business rule enforcement.
     
@@ -364,6 +399,13 @@ def _validate_policy_rules(db, invoice_doc: Dict[str, Any]) -> List[Dict[str, An
     - E3-P2: Invoice date window validation
     - E3-P3: High amount threshold warning
     - E3-P4: Country-specific mandatory fields
+    
+    Args:
+        db: MongoDB database connection
+        invoice_doc: Invoice document to validate
+        config_service: Optional ConfigurationService for dynamic parameters
+        org_id: Organization ID for configuration
+        region: Region for configuration
     
     Returns:
         List of policy validation issues
@@ -528,7 +570,13 @@ def _validate_policy_rules(db, invoice_doc: Dict[str, Any]) -> List[Dict[str, An
     return issues
 
 
-def _validate_duplicate_rules(db, invoice_doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _validate_duplicate_rules(
+    db,
+    invoice_doc: Dict[str, Any],
+    config_service: Optional[ConfigurationService] = None,
+    org_id: str = "DEFAULT",
+    region: str = "US"
+) -> List[Dict[str, Any]]:
     """
     Validate DUPLICATE rules: Risk protection against duplicates and suspicious patterns.
     
@@ -539,6 +587,13 @@ def _validate_duplicate_rules(db, invoice_doc: Dict[str, Any]) -> List[Dict[str,
     - E4-D1: Exact duplicate (same vendor + same invoice number)
     - E4-D2: Time-window duplicate (same vendor + same amount within 30 days)
     - E4-D3: Similar amount heuristic (±2% within 60 days, different number)
+    
+    Args:
+        db: MongoDB database connection
+        invoice_doc: Invoice document to validate
+        config_service: Optional ConfigurationService for dynamic parameters
+        org_id: Organization ID for configuration
+        region: Region for configuration
     
     Returns:
         List of duplicate validation issues
@@ -744,7 +799,13 @@ def build_validation_result(issues: List[Dict[str, Any]], validated_at: str) -> 
     }
 
 
-def validate(db, invoice_doc: Dict[str, Any]) -> Dict[str, Any]:
+def validate(
+    db,
+    invoice_doc: Dict[str, Any],
+    config_service: Optional[ConfigurationService] = None,
+    org_id: str = "DEFAULT",
+    region: str = "US"
+) -> Dict[str, Any]:
     """
     Main ValidationDomain entry point: Coordinate all validation rule groups.
     
@@ -759,6 +820,9 @@ def validate(db, invoice_doc: Dict[str, Any]) -> Dict[str, Any]:
     Args:
         db: MongoDB database connection
         invoice_doc: Invoice document to validate
+        config_service: Optional ConfigurationService for dynamic configuration
+        org_id: Organization ID for configuration lookup
+        region: Region for configuration lookup
     
     Returns:
         Complete ValidationResult with all issues and status
@@ -767,9 +831,9 @@ def validate(db, invoice_doc: Dict[str, Any]) -> Dict[str, Any]:
     
     # Validate each rule category
     structural_issues = _validate_structural_rules(invoice_doc)
-    financial_issues = _validate_financial_rules(invoice_doc)
-    policy_issues = _validate_policy_rules(db, invoice_doc)
-    duplicate_issues = _validate_duplicate_rules(db, invoice_doc)
+    financial_issues = _validate_financial_rules(invoice_doc, config_service, org_id, region)
+    policy_issues = _validate_policy_rules(db, invoice_doc, config_service, org_id, region)
+    duplicate_issues = _validate_duplicate_rules(db, invoice_doc, config_service, org_id, region)
     
     # Aggregate all issues
     all_issues = structural_issues + financial_issues + policy_issues + duplicate_issues

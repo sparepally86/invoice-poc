@@ -16,6 +16,7 @@ from app.api import dev_reindex_feedback, dev_retrieve  # noqa: E402
 # Import your router module (ensure this path matches your repo)
 from app.api import invoices, masterdata, dev, tasks  # noqa: E402
 from app.api import explain, feedback  # noqa: E402
+from app.api import admin_config  # noqa: E402
 
 logger.info("Starting Invoice POC Agentic application")
 
@@ -36,6 +37,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.exception("CRITICAL: Failed to start orchestrator worker - invoices will not be processed! Error: %s", str(e))
         # Don't re-raise - allow app to continue but log the issue
+    
+    # Create database indexes
+    logger.info("Startup: Creating database indexes...")
+    try:
+        from app.storage.mongo_client import ensure_indexes
+        ensure_indexes()
+        logger.info("Startup: Database indexes created successfully")
+    except Exception as e:
+        logger.warning("Startup: Database index creation failed: %s", str(e))
     
     # Initialize RAG with historical invoices for retrieval
     logger.info("Startup: Initializing RAG vector store with historical invoices...")
@@ -125,6 +135,7 @@ app.include_router(dev_vector.router, prefix="/api/v1")
 app.include_router(dev_explain.router, prefix="/api/v1")
 app.include_router(explain.router, prefix="/api/v1")
 app.include_router(feedback.router, prefix="/api/v1")
+app.include_router(admin_config.router)  # Admin config (path included in router)
 
 # Routers with absolute paths defined internally (already include /api/v1 in route decorators)
 app.include_router(dev_reindex_feedback.router)
