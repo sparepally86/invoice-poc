@@ -11,6 +11,7 @@ import SubmitInvoice from "./pages/SubmitInvoice";
 import Tasks from "./pages/Tasks";
 import Vendors from "./pages/Vendors";
 import POs from "./pages/POs";
+import ValidationRulesPage from "./pages/Settings/ValidationRules";
 
 const rootEl = document.getElementById("root");
 if (!rootEl) {
@@ -29,6 +30,7 @@ createRoot(rootEl).render(
           <Route path="tasks" element={<Tasks />} />
           <Route path="vendors" element={<Vendors />} />
           <Route path="pos" element={<POs />} />
+          <Route path="settings/validation-rules" element={<ValidationRulesPage />} />
           {/* fallback route to Home for unknown routes */}
           <Route path="*" element={<Home />} />
         </Route>

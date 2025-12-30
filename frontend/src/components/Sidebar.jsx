@@ -8,6 +8,7 @@ import {
   Upload, 
   CheckSquare,
   Settings,
+  Sliders,
   BarChart3,
   AlertTriangle,
   Sparkles
@@ -27,6 +28,10 @@ const Sidebar = () => {
 
   const actionItems = [
     { to: '/submit', icon: Upload, label: 'Submit Invoice' },
+  ];
+
+  const settingsItems = [
+    { to: '/settings/validation-rules', icon: Sliders, label: 'Validation Rules' },
   ];
 
   const NavItem = ({ item }) => {
@@ -88,6 +93,18 @@ const Sidebar = () => {
           </div>
           <div className="space-y-1">
             {actionItems.map((item) => (
+              <NavItem key={item.to} item={item} />
+            ))}
+          </div>
+        </div>
+
+        {/* Settings Section */}
+        <div>
+          <div className="px-3 mb-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            Settings
+          </div>
+          <div className="space-y-1">
+            {settingsItems.map((item) => (
               <NavItem key={item.to} item={item} />
             ))}
           </div>

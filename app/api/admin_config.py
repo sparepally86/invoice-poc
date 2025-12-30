@@ -107,7 +107,7 @@ async def get_configurations(
     description="Retrieve configuration for a specific validation rule"
 )
 async def get_rule_configuration(
-    rule_id: str = Query(..., description="Rule ID (e.g., E2-F1)"),
+    rule_id: str,
     org_id: str = Query(..., description="Organization ID"),
     region: str = Query("US", description="Region (US, EU, APAC, ALL)"),
     config_svc: ConfigurationService = Depends(get_config_svc),

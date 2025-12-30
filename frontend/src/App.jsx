@@ -13,7 +13,8 @@ export default function App() {
       '/vendors': { title: 'Suppliers', subtitle: 'Manage your supplier relationships' },
       '/pos': { title: 'Purchase Orders', subtitle: 'View and manage purchase orders' },
       '/submit': { title: 'Submit Invoice', subtitle: 'Upload new invoices for processing' },
-      '/tasks': { title: 'Tasks', subtitle: 'Human-in-the-loop validation tasks' }
+      '/tasks': { title: 'Tasks', subtitle: 'Human-in-the-loop validation tasks' },
+      '/settings/validation-rules': { title: 'Validation Rules', subtitle: 'Manage financial, policy, and duplicate detection thresholds' }
     };
     
     if (location.pathname.startsWith('/invoices/') && location.pathname !== '/invoices') {
