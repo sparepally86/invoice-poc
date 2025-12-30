@@ -197,7 +197,7 @@ export default function Invoices() {
                     <span className="text-primary-600 font-medium">{inv.header?.po_number || inv.header?.po || "-"}</span>
                   </td>
                   <td className="px-6 py-4 font-medium text-slate-900">
-                    ${(inv.header?.grand_total?.value ?? inv.header?.amount ?? 0).toLocaleString()}
+                    ${(inv.header?.total_amount ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                   <td className="px-6 py-4">
                     {getStatusBadge(inv.status)}
