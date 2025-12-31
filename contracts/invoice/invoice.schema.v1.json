@@ -135,6 +135,12 @@
           "title": "Total Amount",
           "description": "Total invoice amount.",
           "minimum": 0
+        },
+        "po_number": {
+          "type": "string",
+          "title": "Purchase Order Number",
+          "description": "Optional purchase order number associated with the invoice.",
+          "minLength": 1
         }
       },
       "additionalProperties": false
