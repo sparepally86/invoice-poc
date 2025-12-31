@@ -55,7 +55,7 @@ async def post_explain(invoice_id: str = Path(...), payload: dict = Body({})):
             if "timestamp" not in step_obj:
                 step_obj["timestamp"] = datetime.utcnow().isoformat() + "Z"
             inv["_workflow"]["steps"].append(step_obj)
-            await asyncio_to_thread(db.invoices.replace_one, {"_id": invoice_id}, inv)
+            await asyncio_to_thread(db.invoices.replace_one, {"_id": inv["_id"]}, inv)
         except Exception:
             tb = traceback.format_exc()
             logger.error("persist explain step failed:\n%s", tb)

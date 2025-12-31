@@ -40,6 +40,37 @@ export default function ExplanationPanel({ invoiceId }) {
     }
   };
 
+  const regenerateExplain = async () => {
+    if (!invoiceId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      // POST to trigger new explanation generation
+      const url = (API_BASE ? `${API_BASE}` : "") + `/api/v1/invoices/${encodeURIComponent(invoiceId)}/explain`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        setError(`HTTP ${res.status}: ${txt}`);
+        setLoading(false);
+        return;
+      }
+      const data = await res.json();
+      if (data && data.ok) {
+        setExplain(data.explain);
+      } else {
+        setError(data?.error || "Failed to regenerate explanation");
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const fetchFeedback = async () => {
     if (!invoiceId) return;
     try {
@@ -124,9 +155,25 @@ export default function ExplanationPanel({ invoiceId }) {
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h3 style={{ margin: 0, fontSize: 16 }}>AI Explanation</h3>
-        <div>
-          <button onClick={() => { fetchExplain(); fetchFeedback(); }} disabled={loading} style={{ marginRight: 8 }}>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => { fetchExplain(); fetchFeedback(); }} disabled={loading} style={{ marginRight: 0 }}>
             {loading ? "Refreshing..." : "Refresh"}
+          </button>
+          <button 
+            onClick={() => { if (window.confirm("Regenerate explanation using LLM? This will create a new explanation and replace the current one.")) regenerateExplain(); }} 
+            disabled={loading}
+            style={{ 
+              padding: "6px 12px",
+              backgroundColor: "#8b5cf6",
+              color: "#fff",
+              border: "none",
+              borderRadius: 6,
+              cursor: loading ? "not-allowed" : "pointer",
+              opacity: loading ? 0.6 : 1,
+              fontSize: 13
+            }}
+          >
+            {loading ? "Generating..." : "Regenerate"}
           </button>
         </div>
       </div>
