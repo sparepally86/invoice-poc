@@ -16,7 +16,6 @@ from app.api import dev_reindex_feedback, dev_retrieve  # noqa: E402
 # Import your router module (ensure this path matches your repo)
 from app.api import invoices, masterdata, dev, tasks  # noqa: E402
 from app.api import explain, feedback  # noqa: E402
-from app.api import admin_config  # noqa: E402
 
 logger.info("Starting Invoice POC Agentic application")
 
@@ -135,7 +134,6 @@ app.include_router(dev_vector.router, prefix="/api/v1")
 app.include_router(dev_explain.router, prefix="/api/v1")
 app.include_router(explain.router, prefix="/api/v1")
 app.include_router(feedback.router, prefix="/api/v1")
-app.include_router(admin_config.router)  # Admin config (path included in router)
 
 # Routers with absolute paths defined internally (already include /api/v1 in route decorators)
 app.include_router(dev_reindex_feedback.router)
